@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>売上管理ダッシュボード v12.91 (Fix Sort Logic)</title>
+    <title>売上管理ダッシュボード v18.7 (Complete Fix)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
@@ -18,100 +18,147 @@
         ::-webkit-scrollbar-track { background: #f1f5f9; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        .animate-in { animation: fadeIn 0.3s ease-out forwards; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .card-shadow { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2 px 4px -1px rgba(0, 0, 0, 0.06); }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .card-shadow { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); }
         .tab-btn { @apply px-4 py-2 text-sm font-medium rounded-t-lg transition-colors border-b-2 border-transparent; }
         .tab-btn-active { @apply text-blue-600 border-blue-600 bg-blue-50; }
         .tab-btn-inactive { @apply text-gray-500 hover:text-gray-700 hover:bg-gray-50; }
         .truncate-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #global-error { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 9999; padding: 2rem; overflow: auto; }
     </style>
 </head>
 <body>
+    <div id="global-error">
+        <h2 class="text-2xl font-bold text-red-600 mb-2">システムエラー</h2>
+        <p class="text-gray-600 mb-4">アプリケーションを続行できませんでした。</p>
+        <button onclick="localStorage.clear(); window.location.reload();" class="bg-red-600 text-white px-4 py-2 rounded shadow hover:bg-red-700">設定をリセットして再読み込み</button>
+        <pre id="error-details" class="mt-4 p-4 bg-gray-100 rounded text-xs font-mono"></pre>
+    </div>
     <div id="root"></div>
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            document.getElementById('root').style.display = 'none';
+            const el = document.getElementById('global-error');
+            if(el) {
+                el.style.display = 'block';
+                document.getElementById('error-details').textContent = `Msg: ${msg}\nLine: ${line}`;
+            }
+            return false;
+        };
+    </script>
     <script type="text/babel">
+        // --- 0. Init ---
         if (window.Chart && window.ChartDataLabels) { Chart.register(ChartDataLabels); Chart.defaults.plugins.datalabels.display = false; }
         const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-        // --- Constants ---
+        // --- 1. Error Boundary ---
+        class ErrorBoundary extends React.Component {
+            constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+            static getDerivedStateFromError(error) { return { hasError: true, error }; }
+            componentDidCatch(error, info) { console.error("Boundary Caught:", error, info); }
+            render() {
+                if (this.state.hasError) return <div className="p-8 text-center text-red-600 bg-red-50 border rounded m-4">表示エラーが発生しました。<br/>{this.state.error && this.state.error.toString()}</div>;
+                return this.props.children;
+            }
+        }
+
+        // --- 2. Constants & Icons ---
         const C = {
             COLORS: { sales: '#3b82f6', profit: '#f97316', expenses: '#9ca3af', op: '#fca5a5', budget: '#4b5563', gapP: '#ef4444', gapM: '#10b981' },
             CHART: ['#F87171', '#FBBF24', '#34D399', '#60A5FA', '#818CF8', '#A78BFA', '#F472B6', '#FB923C', '#A3E635', '#22D3EE', '#E879F9', '#94A3B8'],
             CATS: ['広告', 'パブ', 'SNS運用', 'WEB制作', '宣プロ', 'その他案件'],
-            CAT_COLORS: { '広告': '#ef4444', 'パブ': '#eab308', 'SNS運用': '#3b82f6', 'WEB制作': '#22c55e', '宣プロ': '#a855f7', 'その他案件': '#94a3b8' },
-            LABELS: ['3月','4月','5月','6月','7月','8月','9月','10月','11月','12月','1月','2月'],
+            CAT_COLORS: { '広告': 'rgba(239, 68, 68, 0.6)', 'パブ': 'rgba(234, 179, 8, 0.6)', 'SNS運用': 'rgba(59, 130, 246, 0.6)', 'WEB制作': 'rgba(34, 197, 94, 0.6)', '宣プロ': 'rgba(168, 85, 247, 0.6)', 'その他案件': 'rgba(148, 163, 184, 0.6)' },
             TIER: { 1: '#1e3a8a', 2: '#3b82f6', 3: '#cbd5e1' }
         };
         const ICONS = {
-            Dashboard: "M3 3h7v9H3zm14 0h7v5h-7zm0 9h7v9h-7zM3 16h7v5H3z", PieChart: "M21.21 15.89A10 10 0 1 1 8 2.83 M22 12A10 10 0 0 0 12 2v10z", Activity: "M22 12h-4l-3 9L9 3l-3 9H2", Target: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8z", Cloud: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z", Star: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z", Info: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4v4m0 4h.01", Layout: "M3 3h18v18H3zM3 9h18M9 21V9", CreditCard: "M18 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2-2v12a2 2 0 0 1-2 2zm0 0H4M2 10h20", Users: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75", BarChart: "M12 20V10 M18 20V4 M6 20v-4", ArrowLeft: "M19 12H5M12 19l-7-7 7-7", ExternalLink: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3", Briefcase: "rect:2,7,20,14,2,2|path:M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16", TrendingUp: "polyline:23 6 13.5 15.5 8.5 10.5 1 18|polyline:17 6 23 6 23 12", Search: "circle:11,11,8|line:21,21,16.65,16.65", Settings: "circle:12,12,3|path:M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z", SortAsc: "path:M12 19V5|path:m5 12 7-7 7 7", SortDesc: "path:M12 5v14|path:m19 12-7 7-7-7", Alert: "path:M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01", Calendar: "rect:3,4,18,18,2,2|line:16,2,16,6|line:8,2,8,6|line:3,10,21,10", Upload: "path:M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|polyline:17 8 12 3 7 8|line:12,3,12,15", Div1: "circle:12,12,10|text:1", Div2: "rect:4,4,16,16,2|text:2", Div3: "polygon:12 2 22 22 2 22|text:3", Tier1: "circle:12,12,10|text:1", Tier2: "circle:12,12,10|text:2", Tier3: "circle:12,12,10|text:3", Film: "rect:2,2,20,20,2.18,2.18|line:7,2,7,22|line:17,2,17,22|line:2,12,22,12|line:2,7,7,7|line:2,17,7,17|line:17,7,22,7|line:17,17,22,17"
+            Dashboard: "M3 3h7v9H3zm14 0h7v5h-7zm0 9h7v9h-7zM3 16h7v5H3z", PieChart: "M21.21 15.89A10 10 0 1 1 8 2.83 M22 12A10 10 0 0 0 12 2v10z", Activity: "M22 12h-4l-3 9L9 3l-3 9H2", Target: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8z", Cloud: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z", Star: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z", Info: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4v4m0 4h.01", Layout: "M3 3h18v18H3zM3 9h18M9 21V9", CreditCard: "M18 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2-2v12a2 2 0 0 1-2 2zm0 0H4M2 10h20", Users: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75", BarChart: "M12 20V10 M18 20V4 M6 20v-4", ArrowLeft: "M19 12H5M12 19l-7-7 7-7", ExternalLink: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3", Briefcase: "rect:2,7,20,14,2,2|path:M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16", TrendingUp: "polyline:23 6 13.5 15.5 8.5 10.5 1 18|polyline:17 6 23 6 23 12", Search: "circle:11,11,8|line:21,21,16.65,16.65", Settings: "circle:12,12,3|path:M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z", SortAsc: "path:M12 19V5|path:m5 12 7-7 7 7", SortDesc: "path:M12 5v14|path:m19 12-7 7-7", Alert: "path:M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01", Calendar: "rect:3,4,18,18,2,2|line:16,2,16,6|line:8,2,8,6|line:3,10,21,10", Upload: "path:M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|polyline:17 8 12 3 7 8|line:12,3,12,15", Div1: "circle:12,12,10|text:1", Div2: "rect:4,4,16,16,2|text:2", Div3: "polygon:12 2 22 22 2 22|text:3", Tier1: "circle:12,12,10|text:1", Tier2: "circle:12,12,10|text:2", Tier3: "circle:12,12,10|text:3", Film: "rect:2,2,20,20,2.18,2.18|line:7,2,7,22|line:17,2,17,22|line:2,12,22,12|line:2,7,7,7|line:2,17,7,17|line:17,7,22,7|line:17,17,22,17", History: "circle:12,12,9|polyline:12 6 12 12 16 14"
         };
         const CLS = { TH: "px-4 py-3 text-xs font-semibold text-gray-500 uppercase bg-gray-100 border-b border-gray-200 whitespace-nowrap sticky top-0 z-10 select-none", TD: "px-4 py-4 text-sm text-gray-700 border-b border-gray-100 align-middle", NAV_BTN: "px-4 py-2 rounded-full text-sm font-medium transition-colors duration-200 cursor-pointer flex items-center justify-start gap-1 select-none whitespace-nowrap flex-shrink-0 border border-gray-300", NAV_BTN_ACTIVE: "bg-blue-600 text-white shadow-lg shadow-blue-500/50 font-extrabold border-blue-700", NAV_BTN_INACTIVE: "bg-white text-gray-700 hover:bg-blue-50 hover:border-blue-400 hover:text-blue-700" };
 
-        // --- Helper Logic ---
+        function Icon({ name, size = 20, color = "currentColor", className = "" }) {
+            const d = ICONS[name]; if (!d) return <svg width={size} height={size} className={className} />;
+            return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{d.includes('|') ? d.split('|').map((p, i) => { const [t, v] = p.split(':'); if (t === 'circle') { const [cx, cy, r] = v.split(','); return <circle key={i} cx={cx} cy={cy} r={r} /> } if (t === 'rect') { const [x, y, w, h, rx, ry] = v.split(','); return <rect key={i} x={x} y={y} width={w} height={h} rx={rx} ry={ry} /> } if (t === 'line') { const [x1, y1, x2, y2] = v.split(','); return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} /> } if (t === 'polyline') return <polyline key={i} points={v} />; if (t === 'polygon') return <polygon key={i} points={v} />; if (t === 'text') return <text key={i} x="12" y="16" fontSize="12" textAnchor="middle" stroke="none" fill="currentColor">{v}</text>; return <path key={i} d={v} /> }) : <path d={d} />}</svg>;
+        }
+
+        // --- 3. Utils ---
         const Utils = {
             parseCurrency: (s) => { if (!s) return 0; if (typeof s === 'number') return s; const r = parseInt(String(s).replace(/[¥￥,，\s"”]/g, ''), 10); return isNaN(r) ? 0 : r; },
             formatYen: (n) => '¥' + (isNaN(Number(n)) ? 0 : Math.floor(Number(n))).toLocaleString(),
-            safeSum: (arr) => (arr || []).reduce((a, b) => a + (Number(b) || 0), 0) * 1000,
+            safeSum: (arr) => (Array.isArray(arr) ? arr : []).reduce((a, b) => a + (Number(b) || 0), 0) * 1000,
             parseDate: (s) => { if (!s) return new Date(0); if (s instanceof Date) return s; const str = String(s).trim(); if (!str) return new Date(0); let d = new Date(str); if (!isNaN(d.getTime())) return d; d = new Date(str.replace(/-/g, '/')); if (!isNaN(d.getTime())) return d; if (str.includes('T')) { d = new Date(str.split('T')[0].replace(/-/g, '/')); if (!isNaN(d.getTime())) return d; } return new Date(0); },
-            getFiscalMonthIndex: (dStr) => { if(!dStr) return -1; const d = Utils.parseDate(dStr); if(isNaN(d.getTime()) || d.getFullYear() < 2000) return -1; const m = d.getMonth(); let i = m - 2; if (i < 0) i += 12; return i; },
-            getJobCategory: (n) => { if(!n) return 'その他案件'; const name = String(n); for(const k of ['広告','パブ','SNS','WEB','制作','宣伝','プロ']) if(name.includes(k)) return k === 'SNS' ? 'SNS運用' : (k === 'WEB'||k === '制作') ? 'WEB制作' : (k === '宣伝'||k === 'プロ') ? '宣プロ' : k; return 'その他案件'; },
-            calculateCumulative: (d) => { let s = 0; return (d||[]).map(v => s += (Number(v) || 0)); }
+            getFiscalMonthIndex: (dStr) => { if (!dStr) return -1; const d = Utils.parseDate(dStr); if (isNaN(d.getTime()) || d.getFullYear() < 2000) return -1; const m = d.getMonth(); let i = m - 2; if (i < 0) i += 12; return i; },
+            getJobCategory: (n) => { if (!n) return 'その他案件'; const name = String(n); for (const k of ['広告', 'パブ', 'SNS', 'WEB', '制作', '宣伝', 'プロ']) if (name.includes(k)) return k === 'SNS' ? 'SNS運用' : (k === 'WEB' || k === '制作') ? 'WEB制作' : (k === '宣伝' || k === 'プロ') ? '宣プロ' : k; return 'その他案件'; },
+            calculateCumulative: (d) => { let s = 0; return (Array.isArray(d) ? d : []).map(v => s += (Number(v) || 0)); }
         };
 
+        // --- 4. Logic ---
         const DataProcessor = {
             processLastYearData: (rows) => {
-                const header = rows.find(r => r.join(" ").includes("売上") && r.join(" ").includes("請求日")); if (!header) return null;
-                const getIdx = (n) => header.findIndex(h => h.trim().includes(n));
-                const idx = { S: getIdx("売上"), P: getIdx("粗利"), D: getIdx("請求日"), C: getIdx("クライアント"), T: getIdx("案件名"), J: getIdx("職種"), Code: getIdx("管理番号"), Reg: getIdx("登録日") };
-                if (idx.C === -1) idx.C = getIdx("顧客");
+                if (!rows || !Array.isArray(rows) || rows.length === 0) return null;
+                let headerIndex = -1; let header = null;
+                for (let i = 0; i < Math.min(rows.length, 15); i++) {
+                    const rStr = rows[i] ? rows[i].map(String).join(" ") : "";
+                    if ((rStr.includes("売上") || rStr.includes("請求")) && (rStr.includes("請求日") || rStr.includes("計上日") || rStr.includes("売上日") || rStr.includes("粗利") || rStr.includes("利益"))) { headerIndex = i; header = rows[i]; break; }
+                }
+                if (!header) return null;
+                const findCol = (keywords) => header.findIndex(h => { const val = String(h).trim(); return keywords.some(k => val.includes(k)); });
+                const idx = { S: findCol(["売上", "請求金額", "金額"]), P: findCol(["粗利", "利益"]), D: findCol(["請求日", "計上日", "売上日", "日付"]), C: findCol(["クライアント", "顧客", "得意先"]), T: findCol(["案件名", "件名", "名称"]), J: findCol(["職種", "分類"]), Code: findCol(["管理番号", "No", "コード"]), Reg: findCol(["登録日"]) };
+                if (idx.S === -1 || idx.P === -1 || idx.D === -1) return null;
+                if (idx.C === -1) idx.C = findCol(["顧客"]);
                 const agg = { s: Array(12).fill(0), p: Array(12).fill(0) }, cAgg = {}; const lyProjects = [];
-                rows.slice(rows.indexOf(header)+1).forEach(r => {
+                rows.slice(headerIndex + 1).forEach(r => {
+                    if (!r || !Array.isArray(r)) return;
                     const dateStr = r[idx.D], m = Utils.getFiscalMonthIndex(dateStr), s = Utils.parseCurrency(r[idx.S]), p = Utils.parseCurrency(r[idx.P]), client = idx.C !== -1 ? (r[idx.C] || "不明").trim() : "不明";
-                    if (m >= 0) { agg.s[m] += s/1000; agg.p[m] += p/1000; if (!cAgg[client]) cAgg[client] = { sales: 0, profit: 0, monthly: Array(12).fill(0).map(()=>({sales:0, profit:0})) }; cAgg[client].sales += s; cAgg[client].profit += p; cAgg[client].monthly[m].sales += s; cAgg[client].monthly[m].profit += p; }
+                    if (m >= 0) { agg.s[m] += s / 1000; agg.p[m] += p / 1000; if (!cAgg[client]) cAgg[client] = { sales: 0, profit: 0, monthly: Array(12).fill(0).map(() => ({ sales: 0, profit: 0 })) }; cAgg[client].sales += s; cAgg[client].profit += p; cAgg[client].monthly[m].sales += s; cAgg[client].monthly[m].profit += p; }
                     if (client) lyProjects.push({ id: idx.Code >= 0 ? r[idx.Code] : '-', title: idx.T >= 0 ? r[idx.T] : '不明', client, sales: s, profit: p, date: dateStr, div: "不明", job: idx.J >= 0 ? r[idx.J] : "その他", regDate: idx.Reg >= 0 ? String(r[idx.Reg] || "").trim() : "", managerId: idx.Code >= 0 ? String(r[idx.Code] || "").trim() : "" });
                 });
                 return { agg, cAgg, lyProjects };
             },
             processBudget: (rows) => {
-                let hIdx = rows.findIndex(r => r.join("").includes("月")); if(hIdx===-1)return null; const colMap=[]; rows[hIdx].forEach((c,i)=>{const m=String(c).match(/(\d+)月/); if(m){let f=parseInt(m[1])-3; if(f<0)f+=12; colMap[f]=i;}});
-                const get = (k) => { const r = rows.find(row => row[0] && String(row[0]).replace(/[\s　]/g,"").includes(k)); if(!r) return Array(12).fill(0); const d=Array(12).fill(0); colMap.forEach((c,m)=>{if(c!==undefined)d[m]=Utils.parseCurrency(r[c])/1000;}); return d; };
-                return { main: { budget: get("売上予算（全社）"), budgetProfit: get("粗利予算（全社）"), expensesBudget: get("販管費予算（全社）"), operatingProfitBudget: get("営業利益予算（全社）") }, div1: { budget: get("売上予算（第1"), budgetProfit: get("粗利予算（第1"), expensesBudget: get("販管費予算（第1"), opBudget: get("営業利益予算（第1")}, div2: { budget: get("売上予算（第2"), budgetProfit: get("粗利予算（第2"), expensesBudget: get("販管費予算（第2"), opBudget: get("営業利益予算（第2")}, div3: { budget: get("売上予算（第3"), budgetProfit: get("粗利予算（第3"), expensesBudget: get("販管費予算（第3"), opBudget: get("営業利益予算（第3")} };
+                if (!rows || !Array.isArray(rows)) return null;
+                let hIdx = rows.findIndex(r => r && Array.isArray(r) && r.join("").includes("月")); if (hIdx === -1) return null;
+                const colMap = []; rows[hIdx].forEach((c, i) => { const m = String(c).match(/(\d+)月/); if (m) { let f = parseInt(m[1]) - 3; if (f < 0) f += 12; colMap[f] = i; } });
+                const get = (k) => { const r = rows.find(row => row && row[0] && String(row[0]).replace(/[\s　]/g, "").includes(k)); if (!r) return Array(12).fill(0); const d = Array(12).fill(0); colMap.forEach((c, m) => { if (c !== undefined) d[m] = Utils.parseCurrency(r[c]) / 1000; }); return d; };
+                return { main: { budget: get("売上予算（全社）"), budgetProfit: get("粗利予算（全社）"), expensesBudget: get("販管費予算（全社）"), operatingProfitBudget: get("営業利益予算（全社）") }, div1: { budget: get("売上予算（第1"), budgetProfit: get("粗利予算（第1"), expensesBudget: get("販管費予算（第1"), opBudget: get("営業利益予算（第1") }, div2: { budget: get("売上予算（第2"), budgetProfit: get("粗利予算（第2"), expensesBudget: get("販管費予算（第2"), opBudget: get("営業利益予算（第2") }, div3: { budget: get("売上予算（第3"), budgetProfit: get("粗利予算（第3"), expensesBudget: get("販管費予算（第3"), opBudget: get("営業利益予算（第3") } };
             },
             processBoardSales: (rows) => {
-                const hIdx = rows.findIndex(r => r.join("").includes("売上") && r.join("").includes("請求日")); if (hIdx===-1) return null;
+                if (!rows || !Array.isArray(rows)) return null;
+                const hIdx = rows.findIndex(r => r && Array.isArray(r) && r.join("").includes("売上") && r.join("").includes("請求日")); if (hIdx === -1) return null;
                 const getIdx = (n) => rows[hIdx].map(String).findIndex(h => h.replace(/\s/g, '').includes(n));
                 const idx = { S: getIdx("売上"), P: getIdx("粗利"), D: getIdx("請求日"), Div: getIdx("事業部"), T: getIdx("案件名"), C: getIdx("クライアント"), J: getIdx("職種"), Code: getIdx("管理番号"), Reg: getIdx("登録日") };
-                const agg = { s: Array(12).fill(0), p: Array(12).fill(0) }, divAgg = { d1: {s:[],p:[]}, d2: {s:[],p:[]}, d3: {s:[],p:[]} }; [1,2,3].forEach(d => { divAgg['d'+d].s = Array(12).fill(0); divAgg['d'+d].p = Array(12).fill(0); });
-                const divTotal = { d1:{s:0,p:0}, d2:{s:0,p:0}, d3:{s:0,p:0} }; const projects = [];
-                rows.slice(hIdx+1).forEach(r => {
-                    const s=Utils.parseCurrency(r[idx.S]), p=Utils.parseCurrency(r[idx.P]), dStr=r[idx.D], m=Utils.getFiscalMonthIndex(dStr), divName=String(r[idx.Div]||"");
-                    if (m>=0) { const sK=s/1000, pK=p/1000; agg.s[m]+=sK; agg.p[m]+=pK; if(divName.includes("第1")) { divAgg.d1.s[m]+=sK; divAgg.d1.p[m]+=pK; } else if(divName.includes("第2")) { divAgg.d2.s[m]+=sK; divAgg.d2.p[m]+=pK; } else if(divName.includes("第3")) { divAgg.d3.s[m]+=sK; divAgg.d3.p[m]+=pK; } }
-                    const sK=s/1000, pK=p/1000; if(divName.includes("第1")) { divTotal.d1.s+=sK; divTotal.d1.p+=pK; } else if(divName.includes("第2")) { divTotal.d2.s+=sK; divTotal.d2.p+=pK; } else if(divName.includes("第3")) { divTotal.d3.s+=sK; divTotal.d3.p+=pK; }
-                    projects.push({ id: r[idx.Code], title: r[idx.T], client: r[idx.C], sales: s, profit: p, date: dStr, div: divName.replace("事業部",""), job: r[idx.J]||"その他", regDate: String(r[idx.Reg]||"").trim(), managerId: String(r[idx.Code]||"").trim() });
+                const agg = { s: Array(12).fill(0), p: Array(12).fill(0) }, divAgg = { d1: { s: [], p: [] }, d2: { s: [], p: [] }, d3: { s: [], p: [] } }; [1, 2, 3].forEach(d => { divAgg['d' + d].s = Array(12).fill(0); divAgg['d' + d].p = Array(12).fill(0); });
+                const divTotal = { d1: { s: 0, p: 0 }, d2: { s: 0, p: 0 }, d3: { s: 0, p: 0 } }; const projects = [];
+                rows.slice(hIdx + 1).forEach(r => {
+                    if (!r || !Array.isArray(r)) return;
+                    const s = Utils.parseCurrency(r[idx.S]), p = Utils.parseCurrency(r[idx.P]), dStr = r[idx.D], m = Utils.getFiscalMonthIndex(dStr), divName = String(r[idx.Div] || "");
+                    if (m >= 0) { const sK = s / 1000, pK = p / 1000; agg.s[m] += sK; agg.p[m] += pK; if (divName.includes("第1")) { divAgg.d1.s[m] += sK; divAgg.d1.p[m] += pK; } else if (divName.includes("第2")) { divAgg.d2.s[m] += sK; divAgg.d2.p[m] += pK; } else if (divName.includes("第3")) { divAgg.d3.s[m] += sK; divAgg.d3.p[m] += pK; } }
+                    const sK = s / 1000, pK = p / 1000; if (divName.includes("第1")) { divTotal.d1.s += sK; divTotal.d1.p += pK; } else if (divName.includes("第2")) { divTotal.d2.s += sK; divTotal.d2.p += pK; } else if (divName.includes("第3")) { divTotal.d3.s += sK; divTotal.d3.p += pK; }
+                    projects.push({ id: r[idx.Code], title: r[idx.T], client: r[idx.C], sales: s, profit: p, date: dStr, div: divName.replace("事業部", ""), job: r[idx.J] || "その他", regDate: String(r[idx.Reg] || "").trim(), managerId: String(r[idx.Code] || "").trim() });
                 });
                 return { agg, divAgg, divTotal, projects };
             },
             processExpenses: (rows) => {
-                const header = rows.find(r => String(r).includes("全社販管費実績")); if (!header) return null;
-                const idxAll = header.findIndex(c => String(c).replace(/\s/g,'').includes("全社販管費実績")); const idxM = header.findIndex(c => String(c).includes("月"));
-                const idx1 = header.findIndex(c => String(c).replace(/\s/g,'').includes("第1事業部販管費実績")); const idx2 = header.findIndex(c => String(c).replace(/\s/g,'').includes("第2事業部販管費実績")); const idx3 = header.findIndex(c => String(c).replace(/\s/g,'').includes("第3事業部販管費実績"));
+                if (!rows || !Array.isArray(rows)) return null;
+                const header = rows.find(r => r && String(r).includes("全社販管費実績")); if (!header) return null;
+                const idxAll = header.findIndex(c => String(c).replace(/\s/g, '').includes("全社販管費実績")); const idxM = header.findIndex(c => String(c).includes("月"));
+                const idx1 = header.findIndex(c => String(c).replace(/\s/g, '').includes("第1事業部販管費実績")); const idx2 = header.findIndex(c => String(c).replace(/\s/g, '').includes("第2事業部販管費実績")); const idx3 = header.findIndex(c => String(c).replace(/\s/g, '').includes("第3事業部販管費実績"));
                 const exp = Array(12).fill(0), de = { d1: Array(12).fill(0), d2: Array(12).fill(0), d3: Array(12).fill(0) };
                 rows.forEach(row => {
+                    if (!row || !Array.isArray(row)) return;
                     const mStr = String(row[idxM]), m = mStr.match(/(\d+)月/);
-                    if (m) { const fIdx = (parseInt(m[1],10)-3+12)%12; if(idxAll>-1) exp[fIdx]=Utils.parseCurrency(row[idxAll])/1000; if(idx1>-1) de.d1[fIdx]=Utils.parseCurrency(row[idx1])/1000; if(idx2>-1) de.d2[fIdx]=Utils.parseCurrency(row[idx2])/1000; if(idx3>-1) de.d3[fIdx]=Utils.parseCurrency(row[idx3])/1000; }
+                    if (m) { const fIdx = (parseInt(m[1], 10) - 3 + 12) % 12; if (idxAll > -1) exp[fIdx] = Utils.parseCurrency(row[idxAll]) / 1000; if (idx1 > -1) de.d1[fIdx] = Utils.parseCurrency(row[idx1]) / 1000; if (idx2 > -1) de.d2[fIdx] = Utils.parseCurrency(row[idx2]) / 1000; if (idx3 > -1) de.d3[fIdx] = Utils.parseCurrency(row[idx3]) / 1000; }
                 });
                 return { exp, de };
             },
             processExpenseDetails: (rows, labels) => {
-                 const hIdx = rows.findIndex(r => r&&r.some(c=>String(c).includes('予算'))&&r.some(c=>String(c).includes('実績'))); if(hIdx===-1)return null;
-                 const header = rows[hIdx], mInd = []; for(let i=0;i<12;i++){ const mL=labels[i].replace('月',''); const bI=header.findIndex(h=>String(h).replace(/\s/g,'').includes(`${mL}月予算`)); const aI=header.findIndex(h=>String(h).replace(/\s/g,'').includes(`${mL}月実績`)); if(bI!==-1&&aI!==-1) mInd.push({b:bI,a:aI}); }
-                 const cats=[], mAgg=Array(12).fill(0).map(()=>({budget:0,actual:0})), cAgg={};
-                 rows.slice(hIdx+1).forEach(r => {
-                     const n=String(r[0]).trim(); if(!n||n==='合計')return; const cls=String(r[header.findIndex(h=>String(h).includes('分類'))]||'その他').trim(); if(!cAgg[cls]) cAgg[cls]=Array(12).fill(0); let tB=0, tA=0, mV=[];
-                     mInd.forEach(({b,a},m) => { const bv=Utils.parseCurrency(r[b]), av=Utils.parseCurrency(r[a]), ak=av/1000; mV[m]={budget:bv/1000,actual:ak}; tB+=bv; tA+=av; mAgg[m].budget+=bv/1000; mAgg[m].actual+=ak; cAgg[cls][m]+=ak; });
-                     cats.push({name:n, class:cls, totalBudget:tB, totalActual:tA, achievement:tB>0?tA/tB*100:0, monthlyValues:mV});
+                 if (!rows || !Array.isArray(rows)) return null;
+                 const hIdx = rows.findIndex(r => r && r.some(c => String(c).includes('予算')) && r.some(c => String(c).includes('実績'))); if (hIdx === -1) return null;
+                 const header = rows[hIdx], mInd = []; for (let i = 0; i < 12; i++) { const mL = labels[i].replace('月', ''); const bI = header.findIndex(h => String(h).replace(/\s/g, '').includes(`${mL}月予算`)); const aI = header.findIndex(h => String(h).replace(/\s/g, '').includes(`${mL}月実績`)); if (bI !== -1 && aI !== -1) mInd.push({ b: bI, a: aI }); }
+                 const cats = [], mAgg = Array(12).fill(0).map(() => ({ budget: 0, actual: 0 })), cAgg = {};
+                 rows.slice(hIdx + 1).forEach(r => {
+                     if (!r || !Array.isArray(r)) return;
+                     const n = String(r[0]).trim(); if (!n || n === '合計') return; const cls = String(r[header.findIndex(h => String(h).includes('分類'))] || 'その他').trim(); if (!cAgg[cls]) cAgg[cls] = Array(12).fill(0); let tB = 0, tA = 0, mV = [];
+                     mInd.forEach(({ b, a }, m) => { const bv = Utils.parseCurrency(r[b]), av = Utils.parseCurrency(r[a]), ak = av / 1000; mV[m] = { budget: bv / 1000, actual: ak }; tB += bv; tA += av; mAgg[m].budget += bv / 1000; mAgg[m].actual += ak; cAgg[cls][m] += ak; });
+                     cats.push({ name: n, class: cls, totalBudget: tB, totalActual: tA, achievement: tB > 0 ? tA / tB * 100 : 0, monthlyValues: mV });
                  });
                  return { categories: cats, monthlyData: mAgg, classMonthlyAgg: cAgg };
             }
@@ -122,33 +169,21 @@
                 let actData = actual || Array(12).fill(0), budData = budget || Array(12).fill(0);
                 if (isCumulative) { actData = Utils.calculateCumulative(actData); budData = Utils.calculateCumulative(budData); }
                 const actYen = actData.map(v => v * 1000), budYen = budData.map(v => v * 1000), gapYen = actYen.map((a, i) => a - budYen[i]), isExp = label.includes("販管費");
-                return { labels: labels || [], datasets: [ { type: 'bar', label: '実績', data: actYen, backgroundColor: isExp ? C.COLORS.expenses : C.COLORS.operatingProfit, order: 2 }, { type: 'bar', label: '予実GAP', data: gapYen, backgroundColor: (ctx) => (isExp ? (ctx.raw > 0 ? C.COLORS.gapP : C.COLORS.gapM) : (ctx.raw >= 0 ? C.COLORS.gapM : C.COLORS.gapP)), order: 3 }, { type: 'line', label: '予算', data: budYen, borderColor: C.COLORS.budget, borderDash: [5,5], fill: false, order: 1 } ] };
+                return { labels: labels || [], datasets: [{ type: 'bar', label: '実績', data: actYen, backgroundColor: isExp ? C.COLORS.expenses : C.COLORS.operatingProfit, order: 2 }, { type: 'bar', label: '予実GAP', data: gapYen, backgroundColor: (ctx) => (isExp ? (ctx.raw > 0 ? C.COLORS.gapP : C.COLORS.gapM) : (ctx.raw >= 0 ? C.COLORS.gapM : C.COLORS.gapP)), order: 3 }, { type: 'line', label: '予算', data: budYen, borderColor: C.COLORS.budget, borderDash: [5, 5], fill: false, order: 1 }] };
             }
         };
 
-        // --- Custom Hook for Sorting ---
-        const useSortableData = (items, config = null) => {
+        // --- 5. Hooks ---
+        function useSortableData(items, config = null) {
             const [sortConfig, setSortConfig] = useState(config);
             const sortedItems = useMemo(() => {
                 let sortableItems = [...items];
                 if (sortConfig !== null) {
                     sortableItems.sort((a, b) => {
                         let aVal = a[sortConfig.key], bVal = b[sortConfig.key];
-                        // Date sorting logic
-                        if (sortConfig.key === 'date' || sortConfig.key === 'regDate') {
-                            const dateA = Utils.parseDate(aVal).getTime();
-                            const dateB = Utils.parseDate(bVal).getTime();
-                            return (dateA - dateB) * (sortConfig.direction === 'ascending' ? 1 : -1);
-                        }
-                        // Numeric sorting logic
-                        if (typeof aVal === 'number' && typeof bVal === 'number') {
-                            return (aVal - bVal) * (sortConfig.direction === 'ascending' ? 1 : -1);
-                        }
-                        // String sorting logic
-                        if (typeof aVal === 'string') {
-                            aVal = aVal.toLowerCase();
-                            bVal = bVal.toLowerCase();
-                        }
+                        if (sortConfig.key === 'date' || sortConfig.key === 'regDate') { const dateA = Utils.parseDate(aVal).getTime(); const dateB = Utils.parseDate(bVal).getTime(); return (dateA - dateB) * (sortConfig.direction === 'ascending' ? 1 : -1); }
+                        if (typeof aVal === 'number' && typeof bVal === 'number') { return (aVal - bVal) * (sortConfig.direction === 'ascending' ? 1 : -1); }
+                        if (typeof aVal === 'string') { aVal = aVal.toLowerCase(); bVal = bVal.toLowerCase(); }
                         if (aVal < bVal) return sortConfig.direction === 'ascending' ? -1 : 1;
                         if (aVal > bVal) return sortConfig.direction === 'ascending' ? 1 : -1;
                         return 0;
@@ -162,54 +197,9 @@
                 setSortConfig({ key, direction });
             };
             return { items: sortedItems, requestSort, sortConfig };
-        };
+        }
 
-        // --- UI Components ---
-        const Icon = ({ name, size = 20, color = "currentColor", className = "" }) => {
-            const d = ICONS[name]; if (!d) return <svg width={size} height={size} className={className} />;
-            return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{d.includes('|')?d.split('|').map((p,i)=>{const[t,v]=p.split(':');if(t==='circle'){const[cx,cy,r]=v.split(',');return<circle key={i} cx={cx} cy={cy} r={r}/>}if(t==='rect'){const[x,y,w,h,rx,ry]=v.split(',');return<rect key={i} x={x} y={y} width={w} height={h} rx={rx} ry={ry}/>}if(t==='line'){const[x1,y1,x2,y2]=v.split(',');return<line key={i} x1={x1} y1={y1} x2={x2} y2={y2}/>}if(t==='polyline')return<polyline key={i} points={v}/>;if(t==='polygon')return<polygon key={i} points={v}/>;if(t==='text')return<text key={i} x="12" y="16" fontSize="12" textAnchor="middle" stroke="none" fill="currentColor">{v}</text>;return<path key={i} d={v}/>}):<path d={d} />}</svg>;
-        };
-        const ChartComponent = ({ type, data, options }) => {
-            const canvasRef = useRef(null), chartRef = useRef(null);
-            useEffect(() => {
-                if (!canvasRef.current || !data) return; if (chartRef.current) chartRef.current.destroy();
-                const ctx = canvasRef.current.getContext('2d');
-                chartRef.current = new Chart(ctx, { type, data, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { datalabels: { display: false }, tooltip: { callbacks: { label: (c) => `${c.dataset.label||''}: ${c.raw.y!==undefined?`(${Utils.formatYen(c.raw.x)}, ${c.raw.y}%)`:(typeof c.raw==='number'?Utils.formatYen(c.raw):c.formattedValue)}` } } }, ...options } });
-                return () => { if (chartRef.current) chartRef.current.destroy(); };
-            }, [type, data, options]);
-            return <div className="chart-container"><canvas ref={canvasRef}></canvas></div>;
-        };
-        const StatCard = ({ title, value, budget, achievement, subValue, trend, isExpense = false }) => {
-            let safeAch = achievement || 0; if (isNaN(safeAch) || !isFinite(safeAch)) safeAch = 0;
-            const color = isExpense ? (safeAch > 100 ? C.COLORS.gapP : C.COLORS.gapM) : (safeAch >= 100 ? C.COLORS.gapM : safeAch < 90 ? C.COLORS.gapP : "#f59e0b");
-            const r = 26, c = 2 * Math.PI * r, off = c - (Math.min(safeAch, 100) / 100) * c;
-            return (
-                <div className="bg-white p-5 rounded-xl card-shadow flex justify-between items-center">
-                    <div><h3 className="text-xs font-medium text-gray-500 mb-1">{title}</h3><div className="text-2xl font-bold text-gray-800 mb-1">{value}</div>{budget && <div className="text-xs text-gray-500 mb-1">予算: {budget}</div>}<div className={`text-xs font-medium ${trend==='up'?'text-green-600':trend==='down'?'text-gray-500':'text-gray-400'}`}>{subValue}</div></div>
-                    <div className="flex flex-col items-center"><div className="relative flex items-center justify-center" style={{ width: 60, height: 60 }}><svg className="transform -rotate-90 w-full h-full"><circle cx="50%" cy="50%" r={r} stroke="#e2e8f0" strokeWidth="8" fill="transparent" /><circle cx="50%" cy="50%" r={r} stroke={color} strokeWidth="8" fill="transparent" strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" style={{ transition: "stroke-dashoffset 0.5s" }}/></svg><span className="absolute text-xs font-bold text-gray-700">{Math.round(safeAch)}%</span></div><span className="text-[10px] text-gray-400 mt-1">予算比</span></div>
-                </div>
-            );
-        };
-        const DataTable = ({ columns, data, onRowClick, keyField = 'id', height = 'h-[600px]', defaultSort = null }) => {
-            const { items, requestSort, sortConfig } = useSortableData(data, defaultSort);
-            return (
-                <div className={`overflow-x-auto ${height} scrollbar-thin`}>
-                    <table className="w-full text-sm text-left whitespace-nowrap table-fixed">
-                        <thead className={CLS.TH}><tr>{columns.map(col => <th key={col.key} onClick={() => col.sortable && requestSort(col.key)} className={`px-4 py-3 cursor-pointer hover:bg-gray-200 ${col.align === 'right' ? 'text-right' : 'text-left'} ${col.width || ''}`}>{col.label} {col.sortable && sortConfig?.key === col.key && (sortConfig.direction === 'ascending' ? '▲' : '▼')}</th>)}</tr></thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {items.length > 0 ? items.map((item, i) => (
-                                <tr key={i} onClick={() => onRowClick && onRowClick(item)} className={onRowClick ? "hover:bg-blue-50 cursor-pointer transition-colors" : "hover:bg-gray-50"}>
-                                    {columns.map(col => <td key={col.key} className={`px-4 py-3 ${col.className || ''} ${col.align === 'right' ? 'text-right' : ''} truncate`}>{col.render ? col.render(item, i) : item[col.key]}</td>)}
-                                </tr>
-                            )) : <tr><td colSpan={columns.length} className="p-8 text-center text-gray-400">データがありません</td></tr>}
-                        </tbody>
-                    </table>
-                </div>
-            );
-        };
-
-        // --- 5. Hooks ---
-        const useRecentData = (projectList, filterDiv) => {
+        function useRecentData(projectList, filterDiv) {
             const [period, setPeriod] = useState(7);
             const result = useMemo(() => {
                 const now = new Date(); const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -220,43 +210,100 @@
                 return { data: { totalSales, totalProfit, totalCount: recentProjects.length, marginRate: totalSales > 0 ? (totalProfit / totalSales * 100) : 0 }, recentProjects };
             }, [projectList, period, filterDiv]);
             return { ...result, period, setPeriod };
-        };
+        }
+
+        // --- 6. Other Components ---
+        // ChartComponent, StatCard, DataTable defined before, now using Icon correctly
+        function ChartComponent({ type, data, options }) {
+            const canvasRef = useRef(null), chartRef = useRef(null);
+            useEffect(() => {
+                if (!canvasRef.current || !data) return;
+                if (typeof Chart === 'undefined') return;
+                if (chartRef.current) chartRef.current.destroy();
+                const ctx = canvasRef.current.getContext('2d');
+                chartRef.current = new Chart(ctx, { type, data, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { datalabels: { display: false }, tooltip: { callbacks: { label: (c) => `${c.dataset.label || ''}: ${c.raw.y !== undefined ? `(${Utils.formatYen(c.raw.x)}, ${c.raw.y}%)` : (typeof c.raw === 'number' ? Utils.formatYen(c.raw) : c.formattedValue)}` } } }, ...options } });
+                return () => { if (chartRef.current) chartRef.current.destroy(); };
+            }, [type, data, options]);
+            return <div className="chart-container"><canvas ref={canvasRef}></canvas></div>;
+        }
+
+        function StatCard({ title, value, budget, achievement, subValue, trend, isExpense = false }) {
+            let safeAch = achievement || 0; if (isNaN(safeAch) || !isFinite(safeAch)) safeAch = 0;
+            const color = isExpense ? (safeAch > 100 ? C.COLORS.gapP : C.COLORS.gapM) : (safeAch >= 100 ? C.COLORS.gapM : safeAch < 90 ? C.COLORS.gapP : "#f59e0b");
+            const r = 26, c = 2 * Math.PI * r, off = c - (Math.min(safeAch, 100) / 100) * c;
+            return (
+                <div className="bg-white p-5 rounded-xl card-shadow flex justify-between items-center">
+                    <div><h3 className="text-xs font-medium text-gray-500 mb-1">{title}</h3><div className="text-2xl font-bold text-gray-800 mb-1">{value}</div>{budget && <div className="text-xs text-gray-500 mb-1">予算: {budget}</div>}<div className={`text-xs font-medium ${trend === 'up' ? 'text-green-600' : trend === 'down' ? 'text-gray-500' : 'text-gray-400'}`}>{subValue}</div></div>
+                    <div className="flex flex-col items-center"><div className="relative flex items-center justify-center" style={{ width: 60, height: 60 }}><svg className="transform -rotate-90 w-full h-full"><circle cx="50%" cy="50%" r={r} stroke="#e2e8f0" strokeWidth="8" fill="transparent" /><circle cx="50%" cy="50%" r={r} stroke={color} strokeWidth="8" fill="transparent" strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" style={{ transition: "stroke-dashoffset 0.5s" }} /></svg><span className="absolute text-xs font-bold text-gray-700">{Math.round(safeAch)}%</span></div><span className="text-[10px] text-gray-400 mt-1">予算比</span></div>
+                </div>
+            );
+        }
+
+        function DataTable({ columns, data, onRowClick, keyField = 'id', height = 'h-[600px]', defaultSort = null }) {
+            const { items, requestSort, sortConfig } = useSortableData(data, defaultSort);
+            const getAlignClass = (align) => align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+            return (
+                <div className={`overflow-x-auto ${height} scrollbar-thin`}>
+                    <table className="w-full text-sm text-left whitespace-nowrap table-fixed">
+                        <thead className={CLS.TH}><tr>{columns.map(col => <th key={col.key} onClick={() => col.sortable && requestSort(col.key)} style={col.style} className={`px-4 py-3 cursor-pointer hover:bg-gray-200 ${getAlignClass(col.align)} ${col.width || ''}`}>{col.label} {col.sortable && sortConfig?.key === col.key && (sortConfig.direction === 'ascending' ? '▲' : '▼')}</th>)}</tr></thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {items.length > 0 ? items.map((item, i) => (
+                                <tr key={i} onClick={() => onRowClick && onRowClick(item)} className={onRowClick ? "hover:bg-blue-50 cursor-pointer transition-colors" : "hover:bg-gray-50"}>
+                                    {columns.map(col => <td key={col.key} style={col.style} className={`px-4 py-3 ${col.className || ''} ${getAlignClass(col.align)} truncate`}>{col.render ? col.render(item, i) : item[col.key]}</td>)}
+                                </tr>
+                            )) : <tr><td colSpan={columns.length} className="p-8 text-center text-gray-400">データがありません</td></tr>}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        }
+
+        function ToggleButton({ options, value, onChange }) {
+            return (
+                <div className="flex bg-gray-100 p-1 rounded-lg">
+                    {options.map(opt => (
+                        <button key={opt.value} onClick={() => onChange(opt.value)} className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${value === opt.value ? `bg-white ${opt.activeColor || 'text-blue-600'} shadow-sm` : 'text-gray-500'}`}>
+                            {opt.label}
+                        </button>
+                    ))}
+                </div>
+            );
+        }
 
         // --- 7. Section Components ---
-        const RecentGrowthCard = ({ title, data, period, setPeriod, recentProjects, worksMaster }) => {
+        function RecentGrowthCard({ title, data, period, setPeriod, recentProjects, worksMaster }) {
             const cols = useMemo(() => [
-                { key: 'date', label: '請求日', sortable: true, render: (p)=>p.date?p.date.substring(0,10):'-', className: 'text-gray-500' },
+                { key: 'date', label: '請求日', sortable: true, render: (p)=>p.date?p.date.substring(0,10):'-', className: 'text-gray-500 font-mono' },
                 { key: 'managerId', label: '作品名', sortable: true, render: (p)=>(worksMaster&&worksMaster[p.managerId])||'-', className: 'font-medium text-indigo-900' },
                 { key: 'title', label: '案件名', sortable: true, className: 'text-gray-700' },
                 { key: 'client', label: 'クライアント', sortable: true, className: 'text-gray-500' },
-                { key: 'sales', label: '売上', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.sales), className: 'text-gray-600' },
-                { key: 'profit', label: '粗利', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.profit), className: 'font-bold text-indigo-600' }
+                { key: 'sales', label: '売上', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.sales), className: 'text-gray-600 font-mono' },
+                { key: 'profit', label: '粗利', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.profit), className: 'font-bold text-indigo-600 font-mono' }
             ], [worksMaster]);
             const defaultSort = useMemo(() => ({ key: 'date', direction: 'descending' }), []);
-
             return (
                 <div className="bg-gradient-to-br from-slate-100 to-indigo-50 border border-indigo-200 p-5 rounded-xl card-shadow flex flex-col mt-6">
                     <div className="flex justify-between items-center mb-6"><div><h3 className="text-sm font-bold text-gray-800 flex items-center gap-2"><span className="p-1.5 bg-indigo-600 rounded text-white"><Icon name="TrendingUp" size={14}/></span>{title}</h3><div className="text-xs text-gray-500 ml-1"><span className="font-semibold">{{ 1: "直近1日", 7: "直近7日間", 30: "直近30日間" }[period]}</span> の新規登録案件実績</div></div><div className="flex bg-white p-1 rounded-lg text-xs font-semibold shadow-sm border border-gray-200">{[1, 7, 30].map(p => (<button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1 rounded-md transition-all ${period === p ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-100'}`}>{p}日</button>))}</div></div>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-                        <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl border border-blue-100 shadow-sm"><span className="text-xs text-gray-500 font-medium mb-1">件数</span><span className="text-xl font-extrabold text-blue-600">{data.totalCount.toLocaleString()}<span className="text-xs text-gray-400 ml-1 font-normal">件</span></span></div>
-                        <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl border border-indigo-100 shadow-sm"><span className="text-xs text-gray-500 font-medium mb-1">売上</span><span className="text-xl font-extrabold text-indigo-600">{Utils.formatYen(data.totalSales)}</span></div>
-                        <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl border border-green-100 shadow-sm"><span className="text-xs text-gray-500 font-medium mb-1">粗利</span><span className="text-xl font-extrabold text-green-600">{Utils.formatYen(data.totalProfit)}</span></div>
-                        <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl border border-yellow-100 shadow-sm"><span className="text-xs text-gray-500 font-medium mb-1">粗利率</span><span className="text-xl font-extrabold text-yellow-600">{data.marginRate.toFixed(1)}<span className="text-sm ml-0.5">%</span></span></div>
+                        <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl border border-blue-100 shadow-sm"><span className="text-xs text-gray-500 font-medium mb-1">件数</span><span className="text-xl font-extrabold text-blue-600 font-mono">{data.totalCount.toLocaleString()}<span className="text-xs text-gray-400 ml-1 font-normal font-sans">件</span></span></div>
+                        <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl border border-indigo-100 shadow-sm"><span className="text-xs text-gray-500 font-medium mb-1">売上</span><span className="text-xl font-extrabold text-indigo-600 font-mono">{Utils.formatYen(data.totalSales)}</span></div>
+                        <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl border border-green-100 shadow-sm"><span className="text-xs text-gray-500 font-medium mb-1">粗利</span><span className="text-xl font-extrabold text-green-600 font-mono">{Utils.formatYen(data.totalProfit)}</span></div>
+                        <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl border border-yellow-100 shadow-sm"><span className="text-xs text-gray-500 font-medium mb-1">粗利率</span><span className="text-xl font-extrabold text-yellow-600 font-mono">{data.marginRate.toFixed(1)}<span className="text-sm ml-0.5 font-sans">%</span></span></div>
                     </div>
                     <div className="bg-white rounded-lg border border-indigo-100 overflow-hidden"><DataTable columns={cols} data={recentProjects} defaultSort={defaultSort} height="h-auto" /></div>
                 </div>
             );
-        };
+        }
 
-        const ProfitShareSection = ({ projects, title }) => {
+        function ProfitShareSection({ projects, title }) {
             const map = {}; C.CATS.forEach(c => map[c]=0); (projects||[]).forEach(p => { map[Utils.getJobCategory(p.job)] += p.profit/1000; });
             const data = { labels: C.CATS, datasets: [{ data: C.CATS.map(c=>map[c]), backgroundColor: C.CATS.map(c=>C.CAT_COLORS[c]) }] };
             return (
                 <div className="bg-white p-6 rounded-xl card-shadow mt-6"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 flex items-center"><span className="mr-2 text-blue-600"><Icon name="PieChart" size={20}/></span> {title}</h2></div><div className="h-64 w-full"><ChartComponent type="doughnut" data={data} options={{ plugins: { legend: { position: 'right' }, tooltip: { callbacks: { label: (c) => `${c.label}: ${Utils.formatYen(c.raw*1000)}` } }, datalabels: { color: '#fff', font: { weight: 'bold' }, formatter: (value, ctx) => { let sum = 0; ctx.chart.data.datasets[0].data.map(d=>sum+=d); return sum===0?"":(value*100/sum).toFixed(1)+"%"; } } } }} /></div></div>
             );
-        };
+        }
 
-        const DashboardDivisionAnalysis = ({ monthlyData, divisionMonthlyData, divisionData }) => {
+        function DashboardDivisionAnalysis({ monthlyData, divisionMonthlyData, divisionData }) {
             const getDivData = (key) => (divisionMonthlyData && divisionMonthlyData[key]) ? divisionMonthlyData[key] : {};
             const getProfit = (key) => (getDivData(key).profit || Array(12).fill(0));
             const stackedData = { labels: monthlyData.labels || [], datasets: [ { label: '第1事業部', data: getProfit('div1').map(v=>(v||0)*1000), backgroundColor: '#60A5FA', stack: 'stack' }, { label: '第2事業部', data: getProfit('div2').map(v=>(v||0)*1000), backgroundColor: '#34D399', stack: 'stack' }, { label: '第3事業部', data: getProfit('div3').map(v=>(v||0)*1000), backgroundColor: '#FBBF24', stack: 'stack' } ] };
@@ -264,9 +311,9 @@
             return (
                 <div className="bg-white p-6 rounded-xl card-shadow mt-6"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold text-gray-800 flex items-center"><span className="mr-2 text-blue-600"><Icon name="TrendingUp" size={20}/></span> 事業部別 粗利分析</h2></div><div className="grid grid-cols-1 lg:grid-cols-3 gap-8"><div className="lg:col-span-2 border-r border-gray-100 pr-0 lg:pr-8"><h3 className="text-sm font-bold text-gray-500 mb-4 text-center">月次 粗利推移 (積み上げ)</h3><div className="h-64 w-full"><ChartComponent type="bar" data={stackedData} options={{ scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => Utils.formatYen(v) } } } }} /></div></div><div className="lg:col-span-1"><h3 className="text-sm font-bold text-gray-500 mb-4 text-center">年間 粗利構成比</h3><div className="h-64 w-full"><ChartComponent type="doughnut" data={donutData} options={{ plugins: { datalabels: { color: '#fff', formatter: (v,c)=>{ let s=0; c.chart.data.datasets[0].data.map(d=>s+=d); return s===0?"":(v/s*100).toFixed(1)+"%"; } } } }} /></div></div></div></div>
             );
-        };
+        }
 
-        const RankedProjectsSection = ({ projects, title }) => {
+        function RankedProjectsSection({ projects, title }) {
             const cols = [
                 { key: 'index', label: '#', align: 'center', width: 'w-8', render: (r,i)=>i+1, className: 'font-bold text-gray-500' },
                 { key: 'name', label: '作品名', className: 'font-medium text-gray-800 truncate max-w-[200px]' },
@@ -279,9 +326,9 @@
             return (
                 <div className="bg-white p-6 rounded-xl card-shadow mt-6"><h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><span className="mr-2 text-yellow-500"><Icon name="Star" size={20}/></span> {title}</h3><DataTable columns={cols} data={projects} height="h-auto" /></div>
             );
-        };
+        }
 
-        const RankedClientsSection = ({ clients }) => {
+        function RankedClientsSection({ clients }) {
             const cols = [
                 { key: 'index', label: '#', align: 'center', width: 'w-8', render: (r,i)=>i+1, className: 'font-bold text-gray-500' },
                 { key: 'name', label: 'クライアント', className: 'font-medium text-gray-800 truncate max-w-[150px]' },
@@ -291,55 +338,276 @@
             return (
                 <div className="bg-white p-6 rounded-xl card-shadow"><h3 className="text-lg font-bold text-gray-800 mb-4">主要クライアント (Top 10) - 粗利</h3><DataTable columns={cols} data={clients} height="h-auto" /></div>
             );
-        };
+        }
 
         // --- 8. Page Components ---
-        const ExpensesPage = ({ expenseDetails, monthlyData }) => {
-            if (!monthlyData || !monthlyData.labels || !expenseDetails || !expenseDetails.categories) return <div className="p-8 text-center">データ読み込み中...</div>;
-            const expenseData = useMemo(() => expenseDetails.categories.map(c => { const mVal = (c.monthlyValues && c.monthlyValues[10]) || {budget:0,actual:0}; return { ...c, budget: mVal.budget||0, actual: mVal.actual||0, gap: (mVal.actual||0)-(mVal.budget||0), achievement: (mVal.budget>0)?((mVal.actual||0)/mVal.budget*100):0 }; }), [expenseDetails]);
+
+        function HistoricalPage({ monthlyData, historicalData, projectList, lastYearProjectList }) {
+            const [historyViewMode, setHistoryViewMode] = useState('profit');
+
+            const { dataSet, jobChartData, unitPriceData, clientConcentrationData } = useMemo(() => {
+                const combined = [];
+                const aggregateProjects = (projects, yearLabel) => {
+                    const jobMap = {}; C.CATS.forEach(c => jobMap[c] = 0);
+                    let totalProfit = 0, projectCount = 0; const clientMap = {};
+                    if(projects && Array.isArray(projects)) {
+                        projects.forEach(p => {
+                            const j = Utils.getJobCategory(p.job);
+                            if (jobMap[j] !== undefined) jobMap[j] += p.profit; else jobMap['その他案件'] = (jobMap['その他案件']||0) + p.profit;
+                            totalProfit += p.profit; projectCount += 1; clientMap[p.client] = (clientMap[p.client] || 0) + p.profit;
+                        });
+                    }
+                    const sortedClients = Object.values(clientMap).sort((a, b) => b - a);
+                    const top5Profit = sortedClients.slice(0, 5).reduce((a, b) => a + b, 0);
+                    return { jobMap, projectCount, concentration: totalProfit > 0 ? (top5Profit / totalProfit * 100) : 0 };
+                };
+
+                Object.keys(historicalData).sort().forEach(year => {
+                   const d = historicalData[year];
+                   if(d && d.agg) {
+                       const s = Utils.safeSum(d.agg.s), p = Utils.safeSum(d.agg.p);
+                       let js = { jobMap: {}, projectCount: 0, concentration: 0 };
+                       if (d.projects) js = aggregateProjects(d.projects, year);
+                       combined.push({ year: year + '期', sales: s, profit: p, monthly: d.agg.p, jobBreakdown: js.jobMap, count: js.projectCount, avgProfit: js.projectCount > 0 ? p / js.projectCount : 0, concentration: js.concentration });
+                   }
+                });
+
+                if (!combined.some(d => d.year === '29期') && monthlyData.lastYear) {
+                    const s = Utils.safeSum(monthlyData.lastYear), p = Utils.safeSum(monthlyData.lastYearProfit);
+                    const js = lastYearProjectList ? aggregateProjects(lastYearProjectList, '29') : { jobMap: {}, projectCount: 0, concentration: 0 };
+                    combined.push({ year: '29期', sales: s, profit: p, monthly: monthlyData.lastYearProfit, jobBreakdown: js.jobMap, count: js.projectCount, avgProfit: js.projectCount > 0 ? p / js.projectCount : 0, concentration: js.concentration });
+                }
+
+                if (monthlyData.actual) {
+                    const s = Utils.safeSum(monthlyData.actual), p = Utils.safeSum(monthlyData.actualProfit);
+                    const js = projectList ? aggregateProjects(projectList, '30') : { jobMap: {}, projectCount: 0, concentration: 0 };
+                    combined.push({ year: '30期(今期)', sales: s, profit: p, monthly: monthlyData.actualProfit, jobBreakdown: js.jobMap, count: js.projectCount, avgProfit: js.projectCount > 0 ? p / js.projectCount : 0, concentration: js.concentration });
+                }
+
+                combined.sort((a, b) => parseInt(a.year) - parseInt(b.year));
+                const periods = combined.map(d => d.year);
+                const tableData = combined.map((d, i, arr) => ({ ...d, margin: d.sales > 0 ? d.profit / d.sales * 100 : 0, yoy: i > 0 && arr[i-1].profit > 0 ? (d.profit / arr[i-1].profit * 100) : 0 }));
+                const jobDatasets = C.CATS.map(cat => ({ label: cat, data: combined.map(d => (d.jobBreakdown && d.jobBreakdown[cat]) || 0), backgroundColor: C.CAT_COLORS[cat], stack: 'stack1' }));
+                const unitPriceDatasets = [
+                    { label: '平均案件粗利 (単価)', data: combined.map(d => d.avgProfit), borderColor: '#10b981', backgroundColor: '#10b981', tension: 0.3 },
+                    { label: '案件数', data: combined.map(d => d.count), hidden: true }
+                ];
+                const concentrationDatasets = [{ label: '上位5社 粗利シェア (%)', data: combined.map(d => d.concentration), borderColor: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.2)', fill: true, tension: 0.3 }];
+
+                return { dataSet: tableData, jobChartData: { labels: periods, datasets: jobDatasets }, unitPriceData: { labels: periods, datasets: unitPriceDatasets }, clientConcentrationData: { labels: periods, datasets: concentrationDatasets } };
+            }, [monthlyData, historicalData, projectList, lastYearProjectList]);
+
+            const monthlyAverages = useMemo(() => {
+                const sums = Array(12).fill(0);
+                const counts = Array(12).fill(0);
+                dataSet.forEach(d => {
+                    (d.monthly || []).forEach((val, idx) => {
+                        if (val !== 0) {
+                            sums[idx] += val;
+                            counts[idx]++;
+                        }
+                    });
+                });
+                return sums.map((s, i) => counts[i] ? s / counts[i] : 0);
+            }, [dataSet]);
+
+            const historyChartData = useMemo(() => {
+                const labels = dataSet.map(d => d.year);
+                if (historyViewMode === 'sales') {
+                    return { labels, datasets: [ { type: 'line', label: '案件数', data: dataSet.map(d => d.count), yAxisID: 'y1', borderColor: '#ef4444', borderWidth: 2, fill: false, tension: 0.1 }, { type: 'bar', label: '売上', data: dataSet.map(d => d.sales), yAxisID: 'y', backgroundColor: '#3b82f6', borderRadius: 4, order: 2, barPercentage: 0.5 } ] };
+                } else {
+                    return { labels, datasets: [ { type: 'line', label: '粗利率', data: dataSet.map(d => d.margin), yAxisID: 'y1', borderColor: '#ef4444', borderWidth: 2, fill: false, tension: 0.1 }, { type: 'bar', label: '粗利', data: dataSet.map(d => d.profit), yAxisID: 'y', backgroundColor: '#f97316', borderRadius: 4, order: 2, barPercentage: 0.5 } ] };
+                }
+            }, [dataSet, historyViewMode]);
+
+            const lineData = {
+                labels: MONTH_LABELS,
+                datasets: [
+                    ...dataSet.map((d, i) => ({ label: d.year, data: (d.monthly || []).map(v => v * 1000), borderColor: i === dataSet.length - 1 ? '#3b82f6' : C.CHART[i % C.CHART.length], backgroundColor: 'transparent', borderWidth: i === dataSet.length - 1 ? 3 : 2, borderDash: i === dataSet.length - 1 ? [] : [2,2], hidden: false })),
+                    { label: '過去平均', data: monthlyAverages.map(v => v * 1000), borderColor: '#1e293b', borderWidth: 4, pointRadius: 0, tension: 0.4, fill: false, order: 0 }
+                ]
+            };
+
             const cols = [
-                { key: 'name', label: '項目', sortable: true, className: 'pl-3' }, { key: 'class', label: '分類', sortable: true, className: 'text-gray-500' },
-                { key: 'budget', label: '予算', align: 'right', sortable: true, render: (r)=>Utils.formatYen(r.budget*1000) },
-                { key: 'actual', label: '実績', align: 'right', sortable: true, render: (r)=>Utils.formatYen(r.actual*1000), className: 'font-bold' },
-                { key: 'gap', label: '予実GAP', align: 'right', sortable: true, render: (r)=><span className={r.gap>0?'text-red-500':'text-green-600'}>{Utils.formatYen(r.gap*1000)}</span> },
-                { key: 'achievement', label: '予実比', align: 'right', sortable: true, render: (r)=>r.achievement.toFixed(0)+'%', className: 'pr-3' }
+                { key: 'year', label: '期', className: 'font-bold' },
+                { key: 'sales', label: '売上', align: 'right', className: 'font-mono text-gray-600', render: (r) => Utils.formatYen(r.sales) },
+                { key: 'profit', label: '粗利', align: 'right', className: 'font-mono font-bold text-blue-600', render: (r) => Utils.formatYen(r.profit) },
+                { key: 'margin', label: '利益率', align: 'right', className: 'font-mono text-gray-600', render: (r) => r.margin.toFixed(1) + '%' },
+                { key: 'count', label: '案件数', align: 'right', className: 'font-mono text-gray-600', render: (r) => r.count + '件' },
+                { key: 'yoy', label: '粗利昨対', align: 'right', className: 'font-mono', render: (r) => r.yoy ? r.yoy.toFixed(1) + '%' : '-', className: r => r.yoy >= 100 ? 'text-green-600 font-mono' : 'text-red-500 font-mono' },
+                { key: 'avgProfit', label: '平均単価', align: 'right', className: 'font-mono text-gray-600', render: (r) => Utils.formatYen(r.avgProfit) }
             ];
+
+            // 職種別データを転置（縦軸=職種、横軸=期）
+            const jobTableData = useMemo(() => {
+                return C.CATS.map(cat => {
+                    const row = { jobCategory: cat };
+                    dataSet.forEach(d => {
+                        row[d.year] = (d.jobBreakdown && d.jobBreakdown[cat]) || 0;
+                    });
+                    return row;
+                });
+            }, [dataSet]);
+
+            const periods = dataSet.map(d => d.year);
+            const periodCount = periods.length;
+            // グラフと揃えるため、職種列は固定幅、各期の列は均等配分
+            const jobCategoryWidth = '100px';
+            const periodWidth = `calc((100% - 100px) / ${periodCount})`;
+
+            const jobTableCols = [
+                { key: 'jobCategory', label: '職種', className: 'font-bold text-xs whitespace-nowrap', style: { width: jobCategoryWidth, minWidth: jobCategoryWidth } },
+                ...periods.map(p => ({
+                    key: p,
+                    label: p,
+                    align: 'center',
+                    className: 'font-mono text-gray-600 text-xs',
+                    style: { width: periodWidth, minWidth: periodWidth },
+                    render: (r) => Utils.formatYen(r[p] || 0)
+                }))
+            ];
+
+            return (
+                <div className="space-y-6 animate-in">
+                    <div className="bg-white p-6 rounded-xl card-shadow">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Icon name="TrendingUp" /> 長期業績推移 (23期〜30期)</h2>
+                            <div className="flex bg-gray-100 p-1 rounded-lg">
+                                <button onClick={() => setHistoryViewMode('sales')} className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${historyViewMode === 'sales' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>売上・案件数</button>
+                                <button onClick={() => setHistoryViewMode('profit')} className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${historyViewMode === 'profit' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500'}`}>粗利・粗利率</button>
+                            </div>
+                        </div>
+                        <div className="h-80 w-full">
+                            <ChartComponent type="bar" data={historyChartData} options={{ responsive: true, maintainAspectRatio: false, layout: { padding: { left: 0, right: 0 } }, scales: { x: { grid: { offset: false } }, y: { type: 'linear', position: 'left', ticks: { callback: v => Utils.formatYen(v) } }, y1: { type: 'linear', position: 'right', grid: { display: false }, ticks: { callback: v => historyViewMode === 'sales' ? v + '件' : v + '%' }, min: 0 } }, datasets: { bar: { barPercentage: 0.5, categoryPercentage: 0.8 } }, plugins: { tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.dataset.type === 'line' ? (historyViewMode==='sales'?c.raw+'件':c.raw.toFixed(1)+'%') : Utils.formatYen(c.raw)}` } } } }} />
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-xl card-shadow mt-6">
+                        <h2 className="text-lg font-bold text-gray-800 mb-4">職種別 粗利構成の推移</h2>
+                        <div className="flex flex-col gap-6">
+                            <div className="w-full h-80">
+                                <ChartComponent type="bar" data={jobChartData} options={{ maintainAspectRatio: false, layout: { padding: { left: 0, right: 0 } }, scales: { x: { stacked: true, grid: { offset: false } }, y: { stacked: true, ticks: { callback: v => Utils.formatYen(v) } } }, datasets: { bar: { barPercentage: 0.5, categoryPercentage: 0.8 } }, plugins: { tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${Utils.formatYen(c.raw)}` } } } }} />
+                            </div>
+                            <div className="w-full">
+                                <h4 className="text-sm font-bold text-gray-500 mb-2">詳細データ</h4>
+                                <div className="overflow-x-auto">
+                                    <DataTable columns={jobTableCols} data={jobTableData} height="h-auto" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-xl card-shadow mt-6">
+                        <h2 className="text-lg font-bold text-gray-800 mb-4">月次 粗利トレンド比較 (季節性分析)</h2>
+                        <div className="w-full h-80">
+                            <ChartComponent type="line" data={lineData} options={{ responsive: true, maintainAspectRatio: false, scales: { y: { ticks: { callback: v => Utils.formatYen(v) } } }, plugins: { legend: { position: 'bottom' } } }} />
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                        <div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold text-gray-800 mb-4">平均案件粗利 (生産性指標)</h2><div className="h-64 w-full"><ChartComponent type="line" data={unitPriceData} options={{ scales: { y: { ticks: { callback: v => Utils.formatYen(v) } } }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) { const datasetIndex = context.datasetIndex; const dataIndex = context.dataIndex; if (datasetIndex === 0) { const avgProfit = context.parsed.y; const count = context.chart.data.datasets[1].data[dataIndex]; return [`案件数: ${count}件`, `平均案件粗利（単価）: ¥${Math.floor(avgProfit).toLocaleString()}`]; } return ''; } } } } }} /></div></div>
+                        <div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold text-gray-800 mb-4">上位5社 粗利依存度 (リスク指標)</h2><div className="h-64 w-full"><ChartComponent type="line" data={clientConcentrationData} options={{ scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } }, plugins: { legend: { display: false } } }} /></div></div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-xl card-shadow mt-6">
+                        <h2 className="text-lg font-bold text-gray-800 mb-4">期別 実績詳細</h2>
+                        <DataTable columns={cols} data={dataSet} height="h-auto" />
+                    </div>
+                </div>
+            );
+        }
+
+        function ExpensesPage({ expenseDetails, monthlyData, requestExpenseSort, expenseSortConfig }) {
+            const [filterMonth, setFilterMonth] = useState('all');
+
+            if (!monthlyData || !monthlyData.labels || !expenseDetails || !expenseDetails.categories) return <div className="p-8 text-center">データ読み込み中...</div>;
+
+            const expenseData = useMemo(() => {
+                return expenseDetails.categories.map(c => {
+                    if (filterMonth === 'all') {
+                        return {
+                            ...c,
+                            budget: c.totalBudget,
+                            actual: c.totalActual,
+                            gap: (c.totalActual||0)-(c.totalBudget||0),
+                            achievement: (c.totalBudget>0)?((c.totalActual||0)/c.totalBudget*100):0
+                        };
+                    } else {
+                        const mIdx = Number(filterMonth);
+                        const mVal = (c.monthlyValues && c.monthlyValues[mIdx]) || { budget: 0, actual: 0 };
+                        return {
+                            ...c,
+                            budget: mVal.budget,
+                            actual: mVal.actual,
+                            gap: (mVal.actual||0)-(mVal.budget||0),
+                            achievement: (mVal.budget>0)?((mVal.actual||0)/mVal.budget*100):0
+                        };
+                    }
+                });
+            }, [expenseDetails, filterMonth]);
+
+            const cols = [
+                { key: 'name', label: '項目', sortable: true, className: 'pl-3' },
+                { key: 'class', label: '分類', sortable: true, className: 'text-gray-500' },
+                { key: 'budget', label: '予算', align: 'right', sortable: true, className: 'font-mono text-gray-600', render: (r)=>Utils.formatYen(r.budget*1000) },
+                { key: 'actual', label: '実績', align: 'right', sortable: true, className: 'font-mono font-bold text-gray-800', render: (r)=>Utils.formatYen(r.actual*1000) },
+                { key: 'gap', label: '予実GAP', align: 'right', sortable: true, className: 'font-mono', render: (r)=><span className={r.gap>0?'text-red-500':'text-green-600'}>{Utils.formatYen(r.gap*1000)}</span> },
+                { key: 'achievement', label: '予実比', align: 'right', sortable: true, className: 'font-mono pr-3', render: (r)=>r.achievement.toFixed(0)+'%' }
+            ];
+
             return (
                 <div className="space-y-6 animate-in">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         <StatCard title="累計販管費実績" value={Utils.formatYen(expenseDetails.categories.reduce((s,c)=>s+(c.totalActual||0),0))} budget={Utils.formatYen(expenseDetails.categories.reduce((s,c)=>s+(c.totalBudget||0),0))} achievement={expenseDetails.categories.reduce((s,c)=>s+(c.totalBudget||0),0)>0?expenseDetails.categories.reduce((s,c)=>s+(c.totalActual||0),0)/expenseDetails.categories.reduce((s,c)=>s+(c.totalBudget||0),0)*100:0} subValue="-" trend="up" isExpense={true} />
                         <div className="bg-white p-5 rounded-xl card-shadow flex justify-between items-center"><div><h3 className="text-xs font-medium text-gray-500 mb-1">月次平均（実績）</h3><div className="text-2xl font-bold text-gray-800 mb-1">{Utils.formatYen(expenseDetails.categories.reduce((s,c)=>s+(c.totalActual||0),0)/12)}</div></div><div className="text-gray-300"><Icon name="Calendar" size={40} /></div></div>
                     </div>
-                    <div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold mb-4">月次 販管費 実績 vs 予算</h2><div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: monthlyData.labels || [], datasets: [{ type: 'bar', label: '実績', data: (expenseDetails.monthlyData || []).map(d=>(d.actual||0)*1000), backgroundColor: C.COLORS.expenses, order: 2, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (expenseDetails.monthlyData || []).map((d,i)=>((d.actual||0)-(d.budget||0))*1000), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapP:C.COLORS.gapM, order: 3, borderRadius: 2 }, { type: 'line', label: '予算', data: (expenseDetails.monthlyData || []).map(d=>(d.budget||0)*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5,5], fill: false, order: 1 }] }} /></div></div>
+                    <div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold mb-4">月次 販管費 実績 vs 予算</h2><div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: monthlyData.labels || [], datasets: [{ type: 'bar', label: '実績', data: (expenseDetails.monthlyData || []).map(d=>(d.actual||0)*1000), backgroundColor: C.COLORS.expenses, order: 2, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (expenseDetails.monthlyData || []).map((d,i)=>((d.actual||0)-(d.budget||0))*1000), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapP:C.COLORS.gapM, order: 3, borderRadius: 2 }, { type: 'line', label: '予算', data: (expenseDetails.monthlyData || []).map(d=>(d.budget||0)*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5, 5], fill: false, order: 1 }] }} /></div></div>
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         <div className="lg:col-span-2 bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold mb-4">分類別 月次実績構成比推移</h2><div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: monthlyData.labels || [], datasets: Object.keys(expenseDetails.classMonthlyAgg || {}).sort().map((className, idx) => ({ label: className, data: (expenseDetails.classMonthlyAgg[className] || []).map((val, mIdx) => { const total = (expenseDetails.monthlyData[mIdx] || {}).actual || 0; return total > 0 ? (val / total * 100) : 0; }), backgroundColor: C.CHART[idx % C.CHART.length], stack: 'stack' })) }} options={{ scales: { x: { stacked: true }, y: { stacked: true, max: 100, ticks: { callback: v => v+'%' } } }, plugins: { tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(1)}%` } } } }} /></div></div>
                         <div className="lg:col-span-1 bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold mb-4">通期 分類別実績構成比</h2><div className="h-64 w-full"><ChartComponent type="doughnut" data={{ labels: Object.keys(expenseDetails.classMonthlyAgg || {}).sort(), datasets: [{ data: Object.keys(expenseDetails.classMonthlyAgg || {}).sort().map(cls => (expenseDetails.classMonthlyAgg[cls] || []).reduce((a, b) => a + b, 0)), backgroundColor: Object.keys(expenseDetails.classMonthlyAgg || {}).sort().map((_, idx) => C.CHART[idx % C.CHART.length]) }] }} options={{ plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (c) => `${c.label}: ${Utils.formatYen(c.raw*1000)}` } }, datalabels: { color: '#fff', font: { weight: 'bold' }, formatter: (value, ctx) => { let sum = 0; ctx.chart.data.datasets[0].data.map(d=>sum+=d); return sum===0?"":(value*100/sum).toFixed(1)+"%"; } } } }} /></div></div>
                     </div>
-                    <div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold mb-4">詳細一覧</h2><DataTable columns={cols} data={expenseData} defaultSort={{key:'totalActual', direction:'descending'}} height="h-[500px]" /></div>
+                    <div className="bg-white p-6 rounded-xl card-shadow">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-lg font-bold mb-0">詳細一覧</h2>
+                            <select className="border rounded-lg text-sm px-3 py-2 bg-gray-50" value={filterMonth} onChange={(e)=>setFilterMonth(e.target.value)}>
+                                <option value="all">全期間 (累計)</option>
+                                {monthlyData.labels.map((l,i) => <option key={i} value={i}>{l}</option>)}
+                            </select>
+                        </div>
+                        <DataTable columns={cols} data={expenseData} defaultSort={{key:'totalActual', direction:'descending'}} height="h-[500px]" />
+                    </div>
                 </div>
             );
-        };
+        }
 
-        const ProjectsPage = ({ projectList, monthlyData, worksMaster }) => {
+        function ProjectsPage({ projectList, monthlyData, worksMaster }) {
             const [searchTerm, setSearchTerm] = useState('');
             const [filterDiv, setFilterDiv] = useState('all');
             const [monthFilter, setMonthFilter] = useState('all');
+            const [jobFilter, setJobFilter] = useState('all'); // Add job filter state
+
             const filteredProjects = useMemo(() => {
                  if (!projectList) return [];
                  return projectList.filter(p => {
                      const matchSearch = !searchTerm || (p.title && p.title.toLowerCase().includes(searchTerm.toLowerCase())) || (p.client && p.client.toLowerCase().includes(searchTerm.toLowerCase()));
                      const matchDiv = filterDiv === 'all' || p.div.includes(filterDiv);
                      const matchMonth = monthFilter === 'all' || Utils.getFiscalMonthIndex(p.date) === Number(monthFilter);
-                     return matchSearch && matchDiv && matchMonth;
+
+                     // Job filter logic
+                     const category = Utils.getJobCategory(p.job);
+                     const matchJob = jobFilter === 'all' || category === jobFilter;
+
+                     return matchSearch && matchDiv && matchMonth && matchJob;
                  });
-            }, [projectList, searchTerm, filterDiv, monthFilter]);
+            }, [projectList, searchTerm, filterDiv, monthFilter, jobFilter]);
+
             const cols = [
-                { key: 'date', label: '請求日', width: 'w-[10%]', sortable: true, render: (p)=>p.date?p.date.substring(0,10):'-' },
+                { key: 'date', label: '請求日', width: 'w-[10%]', sortable: true, render: (p)=>p.date?p.date.substring(0,10):'-', className: 'text-gray-500 font-mono' },
                 { key: 'workName', label: '作品名', width: 'w-[20%]', sortable: true, render: (p)=>(worksMaster&&worksMaster[p.managerId])||'-', className: 'font-bold text-blue-600' },
                 { key: 'title', label: '案件名', width: 'w-[25%]', sortable: true, className: 'font-bold text-gray-700' },
                 { key: 'client', label: 'クライアント', width: 'w-[15%]', sortable: true },
-                { key: 'sales', label: '売上', width: 'w-[10%]', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.sales) },
-                { key: 'profit', label: '粗利', width: 'w-[10%]', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.profit), className: 'font-bold text-blue-600' },
+                { key: 'sales', label: '売上', width: 'w-[10%]', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.sales), className: 'font-mono text-gray-600' },
+                { key: 'profit', label: '粗利', width: 'w-[10%]', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.profit), className: 'font-mono font-bold text-blue-600' },
                 { key: 'margin', label: '粗利率', width: 'w-[10%]', align: 'right', sortable: true, render: (p)=>(p.sales>0?(p.profit/p.sales*100).toFixed(1):0)+'%', className: 'text-gray-500' },
             ];
             return (
@@ -348,8 +616,12 @@
                         <div className="flex justify-between items-center mb-4 flex-shrink-0">
                             <h2 className="text-lg font-bold flex items-center gap-2"><Icon name="Briefcase"/> 案件検索 (全{filteredProjects.length}件)</h2>
                             <div className="flex gap-2">
-                                <select className="border rounded-lg text-sm px-3 py-2" value={monthFilter} onChange={(e)=>setMonthFilter(e.target.value)}><option value="all">全期間</option>{C.LABELS.map((l,i)=><option key={i} value={i}>{l}</option>)}</select>
+                                <select className="border rounded-lg text-sm px-3 py-2" value={monthFilter} onChange={(e)=>setMonthFilter(e.target.value)}><option value="all">全期間</option>{(monthlyData.labels || []).map((l,i)=><option key={i} value={i}>{l}</option>)}</select>
                                 <select className="border rounded-lg text-sm px-3 py-2" value={filterDiv} onChange={(e)=>setFilterDiv(e.target.value)}><option value="all">全事業部</option><option value="1">第1</option><option value="2">第2</option><option value="3">第3</option></select>
+                                <select className="border rounded-lg text-sm px-3 py-2" value={jobFilter} onChange={(e)=>setJobFilter(e.target.value)}>
+                                    <option value="all">全職種</option>
+                                    {C.CATS.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
                                 <input type="text" placeholder="案件名・クライアント名..." className="border rounded-lg text-sm px-3 py-2 w-64" value={searchTerm} onChange={(e)=>setSearchTerm(e.target.value)} />
                             </div>
                         </div>
@@ -357,9 +629,9 @@
                     </div>
                 </div>
             );
-        };
+        }
 
-        const WorkDetailView = ({ workId, workName, projectList, monthlyLabels, onBack }) => {
+        function WorkDetailView({ workId, workName, projectList, monthlyLabels, onBack }) {
             const stats = useMemo(() => {
                 const projects = (projectList || []).filter(p => p.managerId === workId);
                 const sales = projects.reduce((s, p) => s + p.sales, 0);
@@ -375,13 +647,13 @@
             }, [workId, projectList]);
             if (!stats.projects.length) return <div className="p-8 text-center">データが見つかりません</div>;
             const cols = [
-                { key: 'date', label: '請求日', sortable: true, render: (p)=>p.date?p.date.substring(0,10):'-', className: 'text-gray-500' },
+                { key: 'date', label: '請求日', sortable: true, render: (p)=>p.date?p.date.substring(0,10):'-', className: 'text-gray-500 font-mono' },
                 { key: 'title', label: '案件名', sortable: true, className: 'font-medium text-gray-800' },
                 { key: 'client', label: 'クライアント名', sortable: true },
                 { key: 'job', label: '職種', sortable: true, render: (p)=><span className="bg-gray-100 px-2 py-1 rounded text-gray-600">{Utils.getJobCategory(p.job)}</span> },
                 { key: 'div', label: '事業部', sortable: true, className: 'text-gray-500' },
-                { key: 'sales', label: '売上', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.sales), className: 'text-gray-600' },
-                { key: 'profit', label: '粗利', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.profit), className: 'font-bold text-blue-600' },
+                { key: 'sales', label: '売上', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.sales), className: 'text-gray-600 font-mono' },
+                { key: 'profit', label: '粗利', align: 'right', sortable: true, render: (p)=>Utils.formatYen(p.profit), className: 'font-bold text-blue-600 font-mono' },
                 { key: 'margin', label: '粗利率', align: 'right', sortable: true, render: (p)=>(p.sales>0?(p.profit/p.sales*100).toFixed(1):0)+'%', className: 'text-gray-500' }
             ];
             return (
@@ -390,10 +662,10 @@
                     <div className="bg-white p-6 rounded-xl card-shadow flex flex-col md:flex-row justify-between items-start md:items-center">
                         <div><h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Icon name="Film" size={28} className="text-purple-600"/> {workName}</h2><div className="text-sm text-gray-500 mt-1">作品別詳細レポート</div></div>
                         <div className="flex gap-4 mt-4 md:mt-0">
-                             <div className="text-right"><div className="text-xs text-gray-400">総売上</div><div className="text-xl font-bold text-gray-800">{Utils.formatYen(stats.sales)}</div></div>
-                             <div className="text-right border-l pl-4"><div className="text-xs text-gray-400">総粗利</div><div className="text-xl font-bold text-blue-600">{Utils.formatYen(stats.profit)}</div></div>
-                             <div className="text-right border-l pl-4"><div className="text-xs text-gray-400">粗利率</div><div className={`text-xl font-bold ${stats.margin < 20 ? 'text-red-500' : 'text-gray-800'}`}>{stats.margin.toFixed(1)}%</div></div>
-                             <div className="text-right border-l pl-4"><div className="text-xs text-gray-400">案件数</div><div className="text-xl font-bold text-gray-600">{stats.count}</div></div>
+                             <div className="text-right"><div className="text-xs text-gray-400">総売上</div><div className="text-xl font-bold text-gray-800 font-mono">{Utils.formatYen(stats.sales)}</div></div>
+                             <div className="text-right border-l pl-4"><div className="text-xs text-gray-400">総粗利</div><div className="text-xl font-bold text-blue-600 font-mono">{Utils.formatYen(stats.profit)}</div></div>
+                             <div className="text-right border-l pl-4"><div className="text-xs text-gray-400">粗利率</div><div className={`text-xl font-bold font-mono ${stats.margin < 20 ? 'text-red-500' : 'text-gray-800'}`}>{stats.margin.toFixed(1)}%</div></div>
+                             <div className="text-right border-l pl-4"><div className="text-xs text-gray-400">案件数</div><div className="text-xl font-bold text-gray-600 font-mono">{stats.count}</div></div>
                         </div>
                     </div>
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -403,9 +675,9 @@
                     <div className="bg-white p-6 rounded-xl card-shadow"><h3 className="text-lg font-bold text-gray-800 mb-4">関連案件一覧</h3><DataTable columns={cols} data={stats.projects} defaultSort={{key:'date', direction:'descending'}} height="h-[400px]" /></div>
                 </div>
             );
-        };
+        }
 
-        const WorkAnalysisPage = ({ projectList, monthlyData, worksMaster }) => {
+        function WorkAnalysisPage({ projectList, monthlyData, worksMaster }) {
             const [searchTerm, setSearchTerm] = useState('');
             const [selectedWorkId, setSelectedWorkId] = useState(null);
             const { worksStats, totalStats } = useMemo(() => {
@@ -420,6 +692,10 @@
                     const client = p.client || '不明'; stats[workId].clients[client] = (stats[workId].clients[client] || 0) + p.profit;
                 });
                 let items = Object.values(stats).map(w => ({ ...w, margin: w.sales > 0 ? (w.profit / w.sales * 100) : 0, topClient: Object.entries(w.clients).sort((a,b) => b[1] - a[1])[0]?.[0] || '-' }));
+
+                // Sort by profit descending here to ensure ranking is correct
+                items.sort((a, b) => b.profit - a.profit);
+
                 return { worksStats: items, totalStats: { count: items.length, profit: items.reduce((s, w) => s + w.profit, 0) } };
             }, [projectList, worksMaster, searchTerm]);
 
@@ -427,26 +703,26 @@
             const cols = [
                 { key: 'name', label: '作品名', sortable: true, className: 'font-medium text-gray-800' },
                 { key: 'topClient', label: '主要クライアント', sortable: true, className: 'text-gray-500' },
-                { key: 'sales', label: '売上', align: 'right', sortable: true, render: (w)=>Utils.formatYen(w.sales), className: 'text-gray-600' },
-                { key: 'profit', label: '粗利', align: 'right', sortable: true, render: (w)=>Utils.formatYen(w.profit), className: 'font-bold text-blue-600' },
-                { key: 'margin', label: '粗利率', align: 'right', sortable: true, render: (w)=>w.margin.toFixed(1)+'%', className: 'text-gray-500' },
-                { key: 'count', label: '案件数', align: 'right', sortable: true, className: 'text-gray-600' }
+                { key: 'sales', label: '売上', align: 'right', sortable: true, render: (w)=>Utils.formatYen(w.sales), className: 'text-gray-600 font-mono' },
+                { key: 'profit', label: '粗利', align: 'right', sortable: true, render: (w)=>Utils.formatYen(w.profit), className: 'font-bold text-blue-600 font-mono' },
+                { key: 'margin', label: '粗利率', align: 'right', sortable: true, render: (w)=>w.margin.toFixed(1)+'%', className: 'text-gray-500 font-mono' },
+                { key: 'count', label: '案件数', align: 'right', sortable: true, className: 'text-gray-600 font-mono' }
             ];
             return (
                  <div className="space-y-6 animate-in">
                     <div className="bg-white p-6 rounded-xl card-shadow flex flex-col md:flex-row justify-between items-center gap-4"><h2 className="text-xl font-bold flex items-center gap-2"><Icon name="Film"/> 作品分析</h2><div className="relative"><input type="text" placeholder="作品名検索..." className="pl-8 pr-4 py-2 border rounded-lg text-sm w-full md:w-64" value={searchTerm} onChange={(e)=>setSearchTerm(e.target.value)} /><span className="absolute left-2.5 top-2.5 text-gray-400"><Icon name="Search" size={14}/></span></div></div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div className="bg-white p-5 rounded-xl card-shadow"><h3 className="text-xs font-medium text-gray-500 mb-1">稼働作品数</h3><div className="text-2xl font-bold text-gray-800">{totalStats.count} <span className="text-sm font-normal text-gray-500">作品</span></div></div>
-                        <div className="bg-white p-5 rounded-xl card-shadow"><h3 className="text-xs font-medium text-gray-500 mb-1">作品別 合計粗利</h3><div className="text-2xl font-bold text-blue-600">{Utils.formatYen(totalStats.profit)}</div></div>
-                         <div className="bg-white p-5 rounded-xl card-shadow"><h3 className="text-xs font-medium text-gray-500 mb-1">Top 1 作品粗利</h3><div className="text-xl font-bold text-gray-800 truncate">{worksStats.length>0 ? worksStats[0].name : '-'}</div><div className="text-sm font-bold text-green-600">{worksStats.length>0 ? Utils.formatYen(worksStats[0].profit) : '-'}</div></div>
+                        <div className="bg-white p-5 rounded-xl card-shadow"><h3 className="text-xs font-medium text-gray-500 mb-1">稼働作品数</h3><div className="text-2xl font-bold text-gray-800 font-mono">{totalStats.count} <span className="text-sm font-normal text-gray-500 font-sans">作品</span></div></div>
+                        <div className="bg-white p-5 rounded-xl card-shadow"><h3 className="text-xs font-medium text-gray-500 mb-1">作品別 合計粗利</h3><div className="text-2xl font-bold text-blue-600 font-mono">{Utils.formatYen(totalStats.profit)}</div></div>
+                         <div className="bg-white p-5 rounded-xl card-shadow"><h3 className="text-xs font-medium text-gray-500 mb-1">Top 1 作品粗利</h3><div className="text-xl font-bold text-gray-800 truncate">{worksStats.length>0 ? worksStats[0].name : '-'}</div><div className="text-sm font-bold text-green-600 font-mono">{worksStats.length>0 ? Utils.formatYen(worksStats[0].profit) : '-'}</div></div>
                     </div>
                     <div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold text-gray-800 mb-4">粗利ランキング (Top 15)</h2><div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: worksStats.sort((a,b)=>b.profit-a.profit).slice(0, 15).map(w => w.name.length > 10 ? w.name.substring(0,10)+'...' : w.name), datasets: [{ label: '粗利', data: worksStats.slice(0, 15).map(w => w.profit), backgroundColor: C.COLORS.profit, borderRadius: 4 }] }} options={{ indexAxis: 'x', scales: { y: { ticks: { callback: v => Utils.formatYen(v) } } }, plugins: { legend: { display: false } } }} /></div></div>
                     <div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold text-gray-800 mb-4">全作品 実績一覧</h2><DataTable columns={cols} data={worksStats} defaultSort={{key:'profit', direction:'descending'}} onRowClick={(w)=>setSelectedWorkId(w.id)} /></div>
                  </div>
             );
-        };
+        }
 
-        const ClientDetailView = ({ clientName, projectList, monthlyLabels, onBack, lastYearStats, lastYearProjectList }) => {
+        function ClientDetailView({ clientName, projectList, monthlyLabels, onBack, lastYearStats, lastYearProjectList }) {
             const [historyMode, setHistoryMode] = useState('current');
             const stats = useMemo(() => {
                 const projects = (projectList || []).filter(p => p.client === clientName);
@@ -468,18 +744,18 @@
             const lyData = lastYearStats?.[clientName] || { profit: 0, monthly: Array(12).fill({ profit: 0 }) };
             const yoyStr = lyData.profit > 0 ? `${(stats.profit / lyData.profit * 100).toFixed(1)}%` : '-';
             const cols = [
-                { key: 'date', label: '請求日', render: (p)=>p.date?p.date.substring(0,10):'-', className: 'text-gray-500' },
+                { key: 'date', label: '請求日', render: (p)=>p.date?p.date.substring(0,10):'-', className: 'text-gray-500 font-mono' },
                 { key: 'title', label: '案件名', className: 'font-medium text-gray-800' },
                 { key: 'job', label: '職種', render: (p)=><span className="bg-gray-100 px-2 py-1 rounded text-gray-600">{Utils.getJobCategory(p.job)}</span> },
-                { key: 'sales', label: '売上', align: 'right', render: (p)=>Utils.formatYen(p.sales), className: 'text-gray-600' },
-                { key: 'profit', label: '粗利', align: 'right', render: (p)=>Utils.formatYen(p.profit), className: 'font-bold text-blue-600' }
+                { key: 'sales', label: '売上', align: 'right', render: (p)=>Utils.formatYen(p.sales), className: 'text-gray-600 font-mono' },
+                { key: 'profit', label: '粗利', align: 'right', render: (p)=>Utils.formatYen(p.profit), className: 'font-bold text-blue-600 font-mono' }
             ];
             return (
                 <div className="space-y-6 animate-in">
                     <button onClick={onBack} className="flex items-center text-sm font-bold text-gray-500 hover:text-blue-600 mb-2 transition-colors"><Icon name="ArrowLeft" size={16} className="mr-1"/> 一覧に戻る</button>
                     <div className="bg-white p-6 rounded-xl card-shadow flex flex-col md:flex-row justify-between items-start md:items-center">
                         <div><h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Icon name="Users" size={28} className="text-blue-600"/> {clientName}</h2><div className="text-sm text-gray-500 mt-1">取引実績詳細レポート</div></div>
-                        <div className="flex gap-4 mt-4 md:mt-0"><div className="text-right"><div className="text-xs text-gray-400">総売上</div><div className="text-xl font-bold text-gray-800">{Utils.formatYen(stats.sales)}</div></div><div className="text-right border-l pl-4"><div className="text-xs text-gray-400">総粗利</div><div className="text-xl font-bold text-blue-600">{Utils.formatYen(stats.profit)}</div><div className={`text-xs ${lyData.profit > 0 && stats.profit >= lyData.profit ? 'text-green-600' : 'text-red-500'}`}>昨対: {yoyStr}</div></div><div className="text-right border-l pl-4"><div className="text-xs text-gray-400">粗利率</div><div className={`text-xl font-bold ${stats.margin < 20 ? 'text-red-500' : 'text-gray-800'}`}>{stats.margin.toFixed(1)}%</div></div></div>
+                        <div className="flex gap-4 mt-4 md:mt-0"><div className="text-right"><div className="text-xs text-gray-400">総売上</div><div className="text-xl font-bold text-gray-800 font-mono">{Utils.formatYen(stats.sales)}</div></div><div className="text-right border-l pl-4"><div className="text-xs text-gray-400">総粗利</div><div className="text-xl font-bold text-blue-600 font-mono">{Utils.formatYen(stats.profit)}</div><div className={`text-xs ${lyData.profit > 0 && stats.profit >= lyData.profit ? 'text-green-600' : 'text-red-500'}`}>昨対: {yoyStr}</div></div><div className="text-right border-l pl-4"><div className="text-xs text-gray-400">粗利率</div><div className={`text-xl font-bold font-mono ${stats.margin < 20 ? 'text-red-500' : 'text-gray-800'}`}>{stats.margin.toFixed(1)}%</div></div></div>
                     </div>
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         <div className="lg:col-span-1 bg-white p-6 rounded-xl card-shadow"><h3 className="text-lg font-bold text-gray-800 mb-4">職種別 粗利構成比</h3><div className="h-64"><ChartComponent type="doughnut" data={{ labels: Object.keys(stats.jobs), datasets: [{ data: Object.values(stats.jobs), backgroundColor: Object.keys(stats.jobs).map(k => C.CAT_COLORS[k] || '#cbd5e1') }] }} options={{ plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (c) => `${c.label}: ${Utils.formatYen(c.raw)}` } } } }} /></div></div>
@@ -487,16 +763,250 @@
                     </div>
                     <div className="bg-white p-6 rounded-xl card-shadow mt-6">
                         <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
-                            <div className="flex flex-wrap items-center gap-3"><h3 className="text-lg font-bold text-gray-800">案件履歴一覧 <span className="text-sm font-normal text-gray-500">({historyMode === 'current' ? '今期' : '昨期'})</span></h3><div className="flex items-center gap-3 text-xs sm:text-sm bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100"><span className="text-gray-600">全<span className="font-bold text-gray-800 mx-1">{displayProjects.length}</span>件</span><span className="text-gray-600">合計粗利: <span className="font-bold text-blue-600 mx-1">{Utils.formatYen(historyStats.totalProfit)}</span></span></div></div>
+                            <div className="flex flex-wrap items-center gap-3"><h3 className="text-lg font-bold text-gray-800">案件履歴一覧 <span className="text-sm font-normal text-gray-500">({historyMode === 'current' ? '今期' : '昨期'})</span></h3><div className="flex items-center gap-3 text-xs sm:text-sm bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100"><span className="text-gray-600">全<span className="font-bold text-gray-800 mx-1">{displayProjects.length}</span>件</span><span className="text-gray-600">合計粗利: <span className="font-bold text-blue-600 mx-1 font-mono">{Utils.formatYen(historyStats.totalProfit)}</span></span></div></div>
                              <div className="flex bg-gray-100 p-1 rounded-lg shrink-0"><button onClick={() => setHistoryMode('current')} className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${historyMode === 'current' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>今期</button><button onClick={() => setHistoryMode('lastYear')} className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${historyMode === 'lastYear' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>昨期</button></div>
                         </div>
                         <DataTable columns={cols} data={displayProjects} defaultSort={{key:'date', direction:'descending'}} height="h-[600px]" />
                     </div>
                 </div>
             );
-        };
+        }
 
-        const ClientAnalysisPage = ({ projectList, monthlyData, lastYearClientStats, lastYearProjectList }) => {
+        function JobAnalysisPage({ projectList, monthlyData }) {
+            const [selectedJob, setSelectedJob] = useState(null);
+            const [monthFilter, setMonthFilter] = useState('all');
+            const [divFilter, setDivFilter] = useState('all');
+
+            const { jobStats, divisionJobStats } = useMemo(() => {
+                const createStats = () => {
+                    const stats = {};
+                    C.CATS.forEach(cat => stats[cat] = { name: cat, sales: 0, profit: 0, count: 0, monthly: Array(12).fill(0).map(() => ({ sales: 0, profit: 0 })) });
+                    return stats;
+                };
+
+                const allStats = createStats();
+                const div1Stats = createStats();
+                const div2Stats = createStats();
+                const div3Stats = createStats();
+
+                const filtered = (projectList || []).filter(p =>
+                    (monthFilter === 'all' || Utils.getFiscalMonthIndex(p.date) === Number(monthFilter)) &&
+                    (divFilter === 'all' || p.div.includes(divFilter))
+                );
+
+                filtered.forEach(p => {
+                    const cat = Utils.getJobCategory(p.job);
+                    const mIdx = Utils.getFiscalMonthIndex(p.date);
+
+                    // 全社統計
+                    if (allStats[cat]) {
+                        allStats[cat].sales += p.sales;
+                        allStats[cat].profit += p.profit;
+                        allStats[cat].count += 1;
+                        if (mIdx >= 0 && mIdx < 12) {
+                            allStats[cat].monthly[mIdx].sales += p.sales;
+                            allStats[cat].monthly[mIdx].profit += p.profit;
+                        }
+                    }
+
+                    // 事業部別統計
+                    if (p.div.includes('1') && div1Stats[cat]) {
+                        div1Stats[cat].sales += p.sales;
+                        div1Stats[cat].profit += p.profit;
+                        div1Stats[cat].count += 1;
+                    }
+                    if (p.div.includes('2') && div2Stats[cat]) {
+                        div2Stats[cat].sales += p.sales;
+                        div2Stats[cat].profit += p.profit;
+                        div2Stats[cat].count += 1;
+                    }
+                    if (p.div.includes('3') && div3Stats[cat]) {
+                        div3Stats[cat].sales += p.sales;
+                        div3Stats[cat].profit += p.profit;
+                        div3Stats[cat].count += 1;
+                    }
+                });
+
+                return {
+                    jobStats: Object.values(allStats).map(s => ({ ...s, margin: s.sales > 0 ? (s.profit / s.sales * 100) : 0 })).sort((a, b) => b.profit - a.profit),
+                    divisionJobStats: {
+                        div1: Object.values(div1Stats).map(s => ({ ...s, margin: s.sales > 0 ? (s.profit / s.sales * 100) : 0 })),
+                        div2: Object.values(div2Stats).map(s => ({ ...s, margin: s.sales > 0 ? (s.profit / s.sales * 100) : 0 })),
+                        div3: Object.values(div3Stats).map(s => ({ ...s, margin: s.sales > 0 ? (s.profit / s.sales * 100) : 0 }))
+                    }
+                };
+            }, [projectList, monthFilter, divFilter]);
+
+            const totalStats = useMemo(() => ({
+                sales: jobStats.reduce((sum, j) => sum + j.sales, 0),
+                profit: jobStats.reduce((sum, j) => sum + j.profit, 0),
+                count: jobStats.reduce((sum, j) => sum + j.count, 0)
+            }), [jobStats]);
+
+            if (selectedJob) {
+                const job = jobStats.find(j => j.name === selectedJob);
+                const jobProjects = (projectList || []).filter(p =>
+                    Utils.getJobCategory(p.job) === selectedJob &&
+                    (monthFilter === 'all' || Utils.getFiscalMonthIndex(p.date) === Number(monthFilter)) &&
+                    (divFilter === 'all' || p.div.includes(divFilter))
+                );
+
+                const cols = [
+                    { key: 'date', label: '請求日', sortable: true, render: (p) => p.date ? p.date.substring(0, 10) : '-', className: 'text-gray-500 font-mono' },
+                    { key: 'title', label: '案件名', sortable: true, className: 'font-medium text-gray-800' },
+                    { key: 'client', label: 'クライアント', sortable: true, className: 'text-gray-700' },
+                    { key: 'div', label: '事業部', sortable: true, className: 'text-gray-500' },
+                    { key: 'sales', label: '売上', align: 'right', sortable: true, render: (p) => Utils.formatYen(p.sales), className: 'font-mono text-gray-600' },
+                    { key: 'profit', label: '粗利', align: 'right', sortable: true, render: (p) => Utils.formatYen(p.profit), className: 'font-bold text-blue-600 font-mono' },
+                    { key: 'margin', label: '粗利率', align: 'right', sortable: true, render: (p) => (p.sales > 0 ? (p.profit / p.sales * 100).toFixed(1) : 0) + '%', className: 'text-gray-500' }
+                ];
+
+                return (
+                    <div className="space-y-6 animate-in">
+                        <button onClick={() => setSelectedJob(null)} className="flex items-center text-sm font-bold text-gray-500 hover:text-blue-600 transition-colors">
+                            <Icon name="ArrowLeft" size={16} className="mr-1" /> 一覧に戻る
+                        </button>
+                        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl card-shadow border border-blue-100">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                                    <span className="p-2 bg-blue-600 rounded-lg text-white"><Icon name="BarChart" size={24} /></span>
+                                    {selectedJob}
+                                </h2>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="bg-white p-4 rounded-lg shadow-sm"><div className="text-xs text-gray-500 mb-1">案件数</div><div className="text-2xl font-bold text-gray-800">{job.count}<span className="text-sm text-gray-400 ml-1">件</span></div></div>
+                                <div className="bg-white p-4 rounded-lg shadow-sm"><div className="text-xs text-gray-500 mb-1">売上</div><div className="text-2xl font-bold text-blue-600">{Utils.formatYen(job.sales)}</div></div>
+                                <div className="bg-white p-4 rounded-lg shadow-sm"><div className="text-xs text-gray-500 mb-1">粗利</div><div className="text-2xl font-bold text-green-600">{Utils.formatYen(job.profit)}</div></div>
+                                <div className="bg-white p-4 rounded-lg shadow-sm"><div className="text-xs text-gray-500 mb-1">粗利率</div><div className="text-2xl font-bold text-orange-600">{job.margin.toFixed(1)}<span className="text-sm">%</span></div></div>
+                            </div>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl card-shadow">
+                            <h3 className="text-lg font-bold text-gray-800 mb-4">月次推移</h3>
+                            <div className="h-64">
+                                <ChartComponent type="bar" data={{
+                                    labels: monthlyData.labels,
+                                    datasets: [
+                                        { type: 'bar', label: '売上', data: job.monthly.map(m => m.sales), backgroundColor: C.COLORS.sales, order: 2 },
+                                        { type: 'line', label: '粗利', data: job.monthly.map(m => m.profit), borderColor: C.COLORS.profit, borderWidth: 2, fill: false, order: 1 }
+                                    ]
+                                }} options={{ scales: { y: { ticks: { callback: v => Utils.formatYen(v) } } } }} />
+                            </div>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl card-shadow">
+                            <h3 className="text-lg font-bold text-gray-800 mb-4">案件一覧 ({jobProjects.length}件)</h3>
+                            <DataTable columns={cols} data={jobProjects} defaultSort={{ key: 'profit', direction: 'descending' }} height="h-[500px]" />
+                        </div>
+                    </div>
+                );
+            }
+
+            const cols = [
+                { key: 'name', label: '職種', sortable: true, className: 'font-bold text-gray-800', render: (j) => <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full" style={{ backgroundColor: C.CAT_COLORS[j.name] || '#cbd5e1' }}></span>{j.name}</span> },
+                { key: 'count', label: '案件数', align: 'right', sortable: true, className: 'font-mono text-gray-600', render: (j) => j.count.toLocaleString() + '件' },
+                { key: 'sales', label: '売上', align: 'right', sortable: true, className: 'font-mono text-gray-600', render: (j) => Utils.formatYen(j.sales) },
+                { key: 'profit', label: '粗利', align: 'right', sortable: true, className: 'font-mono font-bold text-blue-600', render: (j) => Utils.formatYen(j.profit) },
+                { key: 'margin', label: '粗利率', align: 'right', sortable: true, className: 'text-gray-600', render: (j) => j.margin.toFixed(1) + '%' }
+            ];
+
+            return (
+                <div className="space-y-6 animate-in">
+                    <div className="bg-white p-6 rounded-xl card-shadow">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                <Icon name="BarChart" size={24} className="text-blue-600" /> 職種別 売上分析
+                            </h2>
+                            <div className="flex gap-2">
+                                <select className="border rounded-lg text-sm px-3 py-2 bg-gray-50" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
+                                    <option value="all">全期間</option>
+                                    {(monthlyData.labels || []).map((l, i) => <option key={i} value={i}>{l}</option>)}
+                                </select>
+                                <select className="border rounded-lg text-sm px-3 py-2 bg-gray-50" value={divFilter} onChange={(e) => setDivFilter(e.target.value)}>
+                                    <option value="all">全事業部</option>
+                                    <option value="1">第1</option>
+                                    <option value="2">第2</option>
+                                    <option value="3">第3</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-5 rounded-xl border border-blue-200">
+                                <div className="text-sm text-blue-700 mb-1">総案件数</div>
+                                <div className="text-3xl font-bold text-blue-900">{totalStats.count.toLocaleString()}<span className="text-base text-blue-600 ml-1">件</span></div>
+                            </div>
+                            <div className="bg-gradient-to-br from-green-50 to-green-100 p-5 rounded-xl border border-green-200">
+                                <div className="text-sm text-green-700 mb-1">総売上</div>
+                                <div className="text-3xl font-bold text-green-900">{Utils.formatYen(totalStats.sales)}</div>
+                            </div>
+                            <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-5 rounded-xl border border-purple-200">
+                                <div className="text-sm text-purple-700 mb-1">総粗利</div>
+                                <div className="text-3xl font-bold text-purple-900">{Utils.formatYen(totalStats.profit)}</div>
+                            </div>
+                        </div>
+                        <DataTable columns={cols} data={jobStats} onRowClick={(j) => setSelectedJob(j.name)} defaultSort={{ key: 'profit', direction: 'descending' }} height="h-[400px]" />
+                    </div>
+                    <div className="bg-white p-6 rounded-xl card-shadow">
+                        <h3 className="text-lg font-bold text-gray-800 mb-6">職種別 粗利構成比 (全社・事業部別)</h3>
+                        <div className="h-96">
+                            <ChartComponent type="bar" data={(() => {
+                                const labels = ['全社', '第1事業部', '第2事業部', '第3事業部'];
+                                const totalAll = jobStats.reduce((s, j) => s + j.profit, 0);
+                                const totalDiv1 = divisionJobStats.div1.reduce((s, j) => s + j.profit, 0);
+                                const totalDiv2 = divisionJobStats.div2.reduce((s, j) => s + j.profit, 0);
+                                const totalDiv3 = divisionJobStats.div3.reduce((s, j) => s + j.profit, 0);
+
+                                const datasets = C.CATS.map(cat => {
+                                    const allJob = jobStats.find(j => j.name === cat);
+                                    const div1Job = divisionJobStats.div1.find(j => j.name === cat);
+                                    const div2Job = divisionJobStats.div2.find(j => j.name === cat);
+                                    const div3Job = divisionJobStats.div3.find(j => j.name === cat);
+
+                                    return {
+                                        label: cat,
+                                        data: [allJob.profit, div1Job.profit, div2Job.profit, div3Job.profit],
+                                        backgroundColor: C.CAT_COLORS[cat] || '#cbd5e1'
+                                    };
+                                });
+
+                                return { labels, datasets };
+                            })()} options={{
+                                indexAxis: 'y',
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                interaction: {
+                                    mode: 'nearest',
+                                    intersect: true
+                                },
+                                scales: {
+                                    x: {
+                                        stacked: true,
+                                        ticks: { callback: v => Utils.formatYen(v) },
+                                        title: { display: true, text: '粗利額' }
+                                    },
+                                    y: { stacked: true }
+                                },
+                                plugins: {
+                                    legend: { position: 'bottom' },
+                                    tooltip: {
+                                        mode: 'nearest',
+                                        intersect: true,
+                                        callbacks: {
+                                            label: (context) => {
+                                                return `${context.dataset.label}: ${Utils.formatYen(context.parsed.x)}`;
+                                            }
+                                        }
+                                    },
+                                    datalabels: {
+                                        display: false
+                                    }
+                                }
+                            }} />
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function ClientAnalysisPage({ projectList, monthlyData, lastYearClientStats, lastYearProjectList }) {
             const [monthFilter, setMonthFilter] = useState('all');
             const [divFilter, setDivFilter] = useState('all');
             const [searchTerm, setSearchTerm] = useState('');
@@ -519,7 +1029,7 @@
                 cArr.sort((a,b) => b.profit - a.profit);
                 let curCum = 0; const t1=[], t2=[], t3=[];
                 cArr.forEach(c => { curCum += c.profit; const r = gProfit > 0 ? (curCum/gProfit) : 0; if (r <= 0.80) { t1.push(c); c.tier = 1; } else if (r <= 0.95) { t2.push(c); c.tier = 2; } else { t3.push(c); c.tier = 3; } });
-                const tierShares = [{ name: 'Tier 1', value: t1.length, profit: t1.reduce((s,c)=>s+c.profit,0) }, { name: 'Tier 2', value: t2.length, profit: t2.reduce((s,c)=>s+c.profit,0) }, { name: 'Tier 3', value: t3.length, profit: t3.reduce((s,c)=>s+c.profit,0) }];
+                const tierShares = [{ name: 'Tier 1', value: t1.length, profit: t1.reduce((s,c)=>s+c.profit,0) }, { name: 'Tier 2', value: t2.length, profit: t2.reduce((s,c)=>s+c.profit,0) }, { name: 'Tier 3', value: t3.length, profit: t3.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t3.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 }];
                 return { clientStats: cArr, totalStats: { count: cArr.length, profit: gProfit }, tiers: { t1: { count: t1.length, profit: t1.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t1.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 }, t2: { count: t2.length, profit: t2.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t2.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 }, t3: { count: t3.length, profit: t3.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t3.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 } }, allClientNames: Array.from(allNames).sort(), jobCategoryStats: jobClientStats, tierCountData: { labels: tierShares.map(t=>t.name), datasets: [{ data: tierShares.map(t=>t.value), backgroundColor: [C.TIER[1], C.TIER[2], C.TIER[3]] }] }, tierProfitData: { labels: tierShares.map(t=>t.name), datasets: [{ data: tierShares.map(t=>t.profit), backgroundColor: [C.TIER[1], C.TIER[2], C.TIER[3]] }] } };
             }, [projectList, monthFilter, divFilter, searchTerm, lastYearClientStats]);
 
@@ -535,21 +1045,21 @@
                 { key: 'tier', label: 'Tier', align: 'center', sortable: true, render: (c)=><span className={`px-2 py-1 rounded text-xs font-bold text-white ${c.tier===1?'bg-blue-800':c.tier===2?'bg-blue-500':'bg-gray-400'}`}>{c.tier}</span> },
                 { key: 'name', label: 'クライアント名', sortable: true, className: 'font-medium text-gray-800' },
                 { key: 'mainJob', label: '主要職種', sortable: true, render: (c)=><span className="bg-gray-100 px-2 py-1 rounded">{c.mainJob}</span>, className: 'text-xs text-gray-500' },
-                { key: 'sales', label: '売上', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.sales), className: 'text-gray-600' },
-                { key: 'profit', label: '粗利', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.profit), className: (c)=>c.profit>=10000000 ? 'text-indigo-600 font-bold' : 'text-gray-600 font-bold' },
-                { key: 'margin', label: '粗利率', align: 'right', sortable: true, render: (c)=>c.margin.toFixed(1)+'%', className: (c)=>c.margin<20?'text-red-500 font-bold':'text-gray-600' },
-                { key: 'lyProfit', label: '昨期粗利', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.lyProfit), className: 'text-gray-500' },
-                { key: 'yoy', label: '昨対比', align: 'right', sortable: true, render: (c)=>c.yoy>0?c.yoy.toFixed(0)+'%':'-', className: (c)=>c.yoy>=100?'text-green-600':'text-red-500' },
-                { key: 'unitPrice', label: '平均単価', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.unitPrice), className: 'text-gray-500' },
-                { key: 'count', label: '件数', align: 'right', sortable: true, className: 'text-gray-600' }
+                { key: 'sales', label: '売上', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.sales), className: 'text-gray-600 font-mono' },
+                { key: 'profit', label: '粗利', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.profit), className: (c)=>c.profit>=10000000 ? 'text-indigo-600 font-bold font-mono' : 'text-gray-600 font-bold font-mono' },
+                { key: 'margin', label: '粗利率', align: 'right', sortable: true, render: (c)=>c.margin.toFixed(1)+'%', className: (c)=>c.margin<20?'text-red-500 font-bold font-mono':'text-gray-600 font-mono' },
+                { key: 'lyProfit', label: '昨期粗利', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.lyProfit), className: 'text-gray-500 font-mono' },
+                { key: 'yoy', label: '昨対比', align: 'right', sortable: true, render: (c)=>c.yoy>0?c.yoy.toFixed(0)+'%':'-', className: (c)=>c.yoy>=100?'text-green-600 font-mono':'text-red-500 font-mono' },
+                { key: 'unitPrice', label: '平均単価', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.unitPrice), className: 'text-gray-500 font-mono' },
+                { key: 'count', label: '件数', align: 'right', sortable: true, className: 'text-gray-600 font-mono' }
             ];
             const jobCols = [
                 { key: 'index', label: '#', align: 'center', width: 'w-10', render: (r,i)=>i+1, className: 'font-bold text-gray-500' },
                 { key: 'name', label: 'クライアント', className: 'font-medium text-gray-800' },
-                { key: 'profit', label: '粗利', align: 'right', render: (r)=>Utils.formatYen(r.profit), className: 'font-bold text-blue-600' },
-                { key: 'sales', label: '売上', align: 'right', render: (r)=>Utils.formatYen(r.sales), className: 'text-gray-600' },
-                { key: 'count', label: '件数', align: 'right', render: (r)=>r.count+'件', className: 'text-gray-600' },
-                { key: 'margin', label: '粗利率', align: 'right', render: (r)=>r.margin.toFixed(1)+'%', className: 'text-gray-500' }
+                { key: 'profit', label: '粗利', align: 'right', render: (r)=>Utils.formatYen(r.profit), className: 'font-bold text-blue-600 font-mono' },
+                // { key: 'sales', label: '売上', align: 'right', render: (r)=>Utils.formatYen(r.sales), className: 'text-gray-600 font-mono' }, // Removed sales
+                { key: 'count', label: '件数', align: 'right', render: (r)=>r.count+'件', className: 'text-gray-600 font-mono' },
+                { key: 'margin', label: '粗利率', align: 'right', render: (r)=>r.margin.toFixed(1)+'%', className: 'text-gray-500 font-mono' }
             ];
 
             return (
@@ -564,87 +1074,92 @@
                     <div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold text-gray-800 mb-4">全クライアント 実績詳細一覧</h2><DataTable columns={cols} data={clientStats} defaultSort={{key:'profit', direction:'descending'}} onRowClick={(c)=>setSelectedClient(c.name)} /></div>
                 </div>
             );
-        };
+        }
 
-        const DashboardPage = ({ monthlyData, projectList, worksMaster, divisionMonthlyData, divisionData, displayMode, setDisplayMode, opMode, setOpMode, calculateRankedProjects, calculateRankedClients }) => {
+        function DashboardPage({ monthlyData, projectList, worksMaster, divisionMonthlyData, divisionData, displayMode, setDisplayMode, opMode, setOpMode, calculateRankedProjects, calculateRankedClients }) {
             const { data: recentData, period, setPeriod, recentProjects } = useRecentData(projectList, null);
-            const ts = (arr) => Utils.safeSum(arr);
-            const totalSalesAct = ts(monthlyData.actual), totalSalesBud = ts(monthlyData.budget), totalSalesLast = ts(monthlyData.lastYear);
-            const totalProfitAct = ts(monthlyData.actualProfit), totalProfitBud = ts(monthlyData.budgetProfit), totalProfitLast = ts(monthlyData.lastYearProfit);
-            const totalExpAct = ts(monthlyData.expenses), totalExpBud = ts(monthlyData.expensesBudget);
-            const totalOpAct = totalProfitAct - totalExpAct, totalOpBud = totalProfitBud - totalExpBud;
+            const totalSalesAct = Utils.safeSum(monthlyData.actual), totalSalesBud = Utils.safeSum(monthlyData.budget), totalSalesLast = Utils.safeSum(monthlyData.lastYear);
+            const totalProfitAct = Utils.safeSum(monthlyData.actualProfit), totalProfitBud = Utils.safeSum(monthlyData.budgetProfit), totalProfitLast = Utils.safeSum(monthlyData.lastYearProfit);
+            const totalExpAct = Utils.safeSum(monthlyData.expenses), totalExpBud = Utils.safeSum(monthlyData.expensesBudget);
+            const totalOpAct = totalProfitAct - totalExpAct;
+            // FIX: Correctly calculate totalOpBud based on Profit Budget - Expenses Budget
+            const totalOpBud = totalProfitBud - totalExpBud;
+
             const rankedProjects = calculateRankedProjects(projectList, worksMaster);
             const rankedClients = calculateRankedClients(projectList);
-            const chartData = { labels: monthlyData.labels, datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?monthlyData.actual||[]:monthlyData.actualProfit||[]).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 3, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?monthlyData.actual||[]:monthlyData.actualProfit||[]).map((v,i)=>v*1000-(displayMode==='sales'?(monthlyData.budget||[])[i]:(monthlyData.budgetProfit||[])[i])*1000), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 4, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?monthlyData.budget||[]:monthlyData.budgetProfit||[]).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5,5], fill: false, order: 2 }, { type: 'line', label: '昨期実績', data: (displayMode==='sales'?monthlyData.lastYear||[]:monthlyData.lastYearProfit||[]).map(v=>v*1000), borderColor: '#cbd5e1', borderWidth: 2, fill: false, order: 1, tension: 0.3, pointRadius: 0 }] };
+            const chartData = { labels: monthlyData.labels, datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?monthlyData.actual||[]:monthlyData.actualProfit||[]).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 3, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?monthlyData.actual||[]:monthlyData.actualProfit||[]).map((v,i)=>v*1000-(displayMode==='sales'?(monthlyData.budget||[])[i]:(monthlyData.budgetProfit||[])[i])*1000), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 4, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?monthlyData.budget||[]:monthlyData.budgetProfit||[]).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5, 5], fill: false, order: 2 }, { type: 'line', label: '昨期実績', data: (displayMode==='sales'?monthlyData.lastYear||[]:monthlyData.lastYearProfit||[]).map(v=>v*1000), borderColor: '#cbd5e1', borderWidth: 2, fill: false, order: 1, tension: 0.3, pointRadius: 0 }] };
 
             return (
-                <div className="space-y-6 animate-in">
+                <div className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         <StatCard title="累計売上" value={Utils.formatYen(totalSalesAct)} budget={Utils.formatYen(totalSalesBud)} achievement={totalSalesBud>0?totalSalesAct/totalSalesBud*100:0} subValue={<span>GAP: {Utils.formatYen(totalSalesAct-totalSalesBud)}<br/><span className="text-[10px] text-gray-400">昨対: {totalSalesLast>0?(totalSalesAct/totalSalesLast*100).toFixed(1):0}%</span></span>} trend={totalSalesAct>=totalSalesBud?'up':'down'} />
                         <StatCard title="累計粗利" value={Utils.formatYen(totalProfitAct)} budget={Utils.formatYen(totalProfitBud)} achievement={totalProfitBud>0?totalProfitAct/totalProfitBud*100:0} subValue={<span>GAP: {Utils.formatYen(totalProfitAct-totalProfitBud)}<br/><span className="text-[10px] text-gray-400">昨対: {totalProfitLast>0?(totalProfitAct/totalProfitLast*100).toFixed(1):0}%</span></span>} trend={totalProfitAct>=totalProfitBud?'up':'down'} />
                         <StatCard title="累計販管費" value={Utils.formatYen(totalExpAct)} budget={Utils.formatYen(totalExpBud)} achievement={totalExpBud>0?totalExpAct/totalExpBud*100:0} subValue={<span>GAP: {Utils.formatYen(totalExpAct-totalExpBud)}</span>} trend={totalExpAct<=totalExpBud?'up':'down'} isExpense={true} />
                         <StatCard title="累計営業利益" value={Utils.formatYen(totalOpAct)} budget={Utils.formatYen(totalOpBud)} achievement={totalOpBud!==0?totalOpAct/totalOpBud*100:0} subValue={<span>GAP: {Utils.formatYen(totalOpAct-totalOpBud)}</span>} trend={totalOpAct>=totalOpBud?'up':'down'} />
                     </div>
-                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">月次 予実推移 (vs 昨期)</h2><div className="flex bg-gray-100 p-1 rounded-lg"><button onClick={()=>setDisplayMode('sales')} className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${displayMode==='sales'?'bg-white text-blue-600 shadow-sm':'text-gray-500'}`}>売上</button><button onClick={()=>setDisplayMode('profit')} className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${displayMode==='profit'?'bg-white text-green-600 shadow-sm':'text-gray-500'}`}>粗利</button></div></div><div className="h-80 w-full"><ChartComponent type="bar" data={chartData} options={{ scales: { y: { ticks: { callback: (val) => Utils.formatYen(val) } } } }} /></div></div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><div className="flex bg-gray-100 p-1 rounded-lg"><button onClick={() => setOpMode('monthly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${opMode === 'monthly' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>月次</button><button onClick={() => setOpMode('cumulative')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${opMode === 'cumulative' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>累計</button></div></div><div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', monthlyData.operatingProfit, monthlyData.operatingProfitBudget, opMode==='cumulative', monthlyData.labels)} /></div></div><div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold text-gray-800 mb-4">販管費 推移</h2><div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', monthlyData.expenses, monthlyData.expensesBudget, false, monthlyData.labels)} /></div></div></div>
+                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">月次 予実推移 (vs 昨期)</h2><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /></div><div className="h-80 w-full"><ChartComponent type="bar" data={chartData} options={{ scales: { y: { ticks: { callback: (val) => Utils.formatYen(val) } } } }} /></div></div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><ToggleButton options={[{value:'monthly', label:'月次'}, {value:'cumulative', label:'累計'}]} value={opMode} onChange={setOpMode} /></div><div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', monthlyData.operatingProfit, monthlyData.operatingProfitBudget, opMode==='cumulative', monthlyData.labels)} /></div></div><div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold text-gray-800 mb-4">販管費 推移</h2><div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', monthlyData.expenses, monthlyData.expensesBudget, false, monthlyData.labels)} /></div></div></div>
                     <DashboardDivisionAnalysis monthlyData={monthlyData} divisionMonthlyData={divisionMonthlyData} divisionData={divisionData} />
                     <RankedProjectsSection projects={rankedProjects} title="作品別 粗利ランキング (Top 15)" />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><RankedClientsSection clients={rankedClients} /><ProfitShareSection projects={projectList} title="職種別 構成" /></div>
                     <RecentGrowthCard title="直近の実績 (全社)" data={recentData} period={period} setPeriod={setPeriod} recentProjects={recentProjects} worksMaster={worksMaster} />
                 </div>
             );
-        };
+        }
 
-        const DivisionPage = ({ divKey, divLabel, color, divisionMonthlyData, monthlyData, projectList, worksMaster, displayMode, setDisplayMode, divisionOpMode, setDivisionOpMode, calculateRankedProjects, calculateRankedClients }) => {
+        function DivisionPage({ divKey, divLabel, color, divisionMonthlyData, monthlyData, projectList, worksMaster, displayMode, setDisplayMode, divisionOpMode, setDivisionOpMode, calculateRankedProjects, calculateRankedClients }) {
             const { data: recentData, period, setPeriod, recentProjects } = useRecentData(projectList, divKey);
             const divData = divisionMonthlyData[divKey];
-            if (!divData || divData.actual.length === 0) return <div className="bg-white p-6 rounded-xl card-shadow h-96 flex items-center justify-center text-gray-400 flex-col"><p className="mt-4 text-lg">データ処理待ち、またはデータがありません</p></div>;
+            if (!divData || !divData.actual || divData.actual.length === 0) return <div className="bg-white p-6 rounded-xl card-shadow h-96 flex items-center justify-center text-gray-400 flex-col"><p className="mt-4 text-lg">データ処理待ち、またはデータがありません</p></div>;
             const filteredProjects = projectList.filter(p => p.div.includes(divKey.replace('div', '')));
             const rankedProjects = calculateRankedProjects(filteredProjects, worksMaster);
             const rankedClients = calculateRankedClients(filteredProjects);
-            const ts = (arr) => Utils.safeSum(arr);
-            const totalSalesAct = ts(divData.actual), totalSalesBud = ts(divData.budget);
-            const totalProfitAct = ts(divData.profit), totalProfitBud = ts(divData.budgetProfit);
+            const totalSalesAct = Utils.safeSum(divData.actual), totalSalesBud = Utils.safeSum(divData.budget);
+            const totalProfitAct = Utils.safeSum(divData.profit), totalProfitBud = Utils.safeSum(divData.budgetProfit);
             const totalOpAct = (divData.profit && divData.expenses) ? divData.profit.reduce((s, p, i) => s + ((p*1000) - ((divData.expenses[i]||0)*1000)), 0) : 0;
             const totalOpBud = (divData.budgetProfit && divData.expensesBudget) ? divData.budgetProfit.reduce((s, p, i) => s + ((p*1000) - ((divData.expensesBudget[i]||0)*1000)), 0) : 0;
             const opMode = divisionOpMode[divKey] || 'monthly';
             const setOpMode = (mode) => setDivisionOpMode(prev => ({ ...prev, [divKey]: mode }));
 
             return (
-                <div className="space-y-6 animate-in">
+                <div className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                          <StatCard title={`${divLabel} 累計売上`} value={Utils.formatYen(totalSalesAct)} budget={totalSalesBud>0?Utils.formatYen(totalSalesBud):null} achievement={totalSalesBud>0?totalSalesAct/totalSalesBud*100:0} subValue={totalSalesBud>0?`GAP: ${Utils.formatYen(totalSalesAct-totalSalesBud)}`:"-"} trend={totalSalesAct>=totalSalesBud?'up':'down'} />
                          <StatCard title={`${divLabel} 累計粗利`} value={Utils.formatYen(totalProfitAct)} budget={totalProfitBud>0?Utils.formatYen(totalProfitBud):null} achievement={totalProfitBud>0?totalProfitAct/totalProfitBud*100:0} subValue={totalProfitBud>0?`GAP: ${Utils.formatYen(totalProfitAct-totalProfitBud)}`:"-"} trend={totalProfitAct>=totalProfitBud?'up':'down'} />
                          <div className="bg-white p-5 rounded-xl card-shadow flex justify-between items-center"><div><h3 className="text-xs font-medium text-gray-500 mb-1">粗利率</h3><div className="text-2xl font-bold text-gray-800 mb-1">{(totalSalesAct>0?totalProfitAct/totalSalesAct*100:0).toFixed(1)}%</div></div><div className="text-gray-300"><Icon name="Activity" size={40} /></div></div>
                     </div>
-                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">{divLabel} 予実推移</h2><div className="flex bg-gray-100 p-1 rounded-lg"><button onClick={()=>setDisplayMode('sales')} className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${displayMode==='sales'?'bg-white text-blue-600 shadow-sm':'text-gray-500'}`}>売上</button><button onClick={()=>setDisplayMode('profit')} className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${displayMode==='profit'?'bg-white text-green-600 shadow-sm':'text-gray-500'}`}>粗利</button></div></div><div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: monthlyData.labels, datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?divData.actual:divData.profit).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 2, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?divData.actual:divData.profit).map((v,i)=>v*1000-(displayMode==='sales'?divData.budget[i]:divData.budgetProfit[i])*1000), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 3, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?divData.budget:divData.budgetProfit).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5,5], fill: false, order: 1 }] }} /></div></div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><div className="flex bg-gray-100 p-1 rounded-lg"><button onClick={() => setOpMode('monthly')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${opMode === 'monthly' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>月次</button><button onClick={() => setOpMode('cumulative')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${opMode === 'cumulative' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>累計</button></div></div><div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', divData.op, divData.opBudget, opMode==='cumulative', monthlyData.labels)} /></div></div><div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold text-gray-800 mb-4">販管費 推移</h2><div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', divData.expenses, divData.expensesBudget, false, monthlyData.labels)} /></div></div></div>
+                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">{divLabel} 予実推移</h2><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /></div><div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: monthlyData.labels, datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?divData.actual:divData.profit).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 2, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?divData.actual:divData.profit).map((v,i)=>v*1000-(displayMode==='sales'?divData.budget[i]:divData.budgetProfit[i])*1000), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 3, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?divData.budget:divData.budgetProfit).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5,5], fill: false, order: 1 }] }} /></div></div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><ToggleButton options={[{value:'monthly', label:'月次'}, {value:'cumulative', label:'累計'}]} value={opMode} onChange={setOpMode} /></div><div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', divData.op, divData.opBudget, opMode==='cumulative', monthlyData.labels)} /></div></div><div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold text-gray-800 mb-4">販管費 推移</h2><div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', divData.expenses, divData.expensesBudget, false, monthlyData.labels)} /></div></div></div>
                     <RankedProjectsSection projects={rankedProjects} title={`${divLabel} 粗利ランキング (Top 15)`} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><RankedClientsSection clients={rankedClients} /><ProfitShareSection projects={filteredProjects} title={`${divLabel} 職種別 構成`} /></div>
                     <RecentGrowthCard title={`${divLabel} 直近の実績`} data={recentData} period={period} setPeriod={setPeriod} recentProjects={recentProjects} worksMaster={worksMaster} />
                 </div>
             );
-        };
+        }
 
-        const UnifiedDivisionPage = (props) => {
+        function UnifiedDivisionPage(props) {
             const [currentDiv, setCurrentDiv] = useState('div1');
             const divisions = [{ id: 'div1', label: '第1事業部' }, { id: 'div2', label: '第2事業部' }, { id: 'div3', label: '第3事業部' }];
             return (
-                <div className="space-y-6 animate-in">
+                <div className="space-y-6">
                      <div className="flex space-x-1 bg-white p-1 rounded-xl shadow-sm border border-gray-200 w-fit mx-auto md:mx-0">{divisions.map(d => (<button key={d.id} onClick={() => setCurrentDiv(d.id)} className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${currentDiv === d.id ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-100'}`}>{d.label}</button>))}</div>
                      <DivisionPage key={currentDiv} divKey={currentDiv} divLabel={divisions.find(d => d.id === currentDiv).label} color={C.COLORS.sales} {...props} />
                 </div>
             );
-        };
+        }
 
-        const App = () => {
+        const navItems = [{ id: 'dashboard', label: '全社', icon: 'Dashboard' }, { id: 'division', label: '事業部', icon: 'Layout' }, { id: 'history', label: '過去比較', icon: 'History' }, { id: 'clients', label: 'クライアント', icon: 'Users' }, { id: 'works', label: '作品', icon: 'Film' }, { id: 'jobs', label: '職種', icon: 'BarChart' }, { id: 'expenses', label: '販管費', icon: 'CreditCard' }, { id: 'projects', label: '案件管理', icon: 'Briefcase' }];
+
+        const MONTH_LABELS = ['3月','4月','5月','6月','7月','8月','9月','10月','11月','12月','1月','2月'];
+
+        function App() {
             const [activeTab, setActiveTab] = useState('dashboard');
-            const [searchTerm, setSearchTerm] = useState('');
             const [displayMode, setDisplayMode] = useState('profit');
-            const [monthlyData, setMonthlyData] = useState({ labels: C.LABELS, budget: [], budgetProfit: [], actual: [], actualProfit: [], lastYear: [], lastYearProfit: [], expenses: [], expensesBudget: [], operatingProfit: [], operatingProfitBudget: [] });
+            const [monthlyData, setMonthlyData] = useState({ labels: MONTH_LABELS, budget: [], budgetProfit: [], actual: [], actualProfit: [], lastYear: [], lastYearProfit: [], expenses: [], expensesBudget: [], operatingProfit: [], operatingProfitBudget: [] });
             const [divisionData, setDivisionData] = useState({ labels: ['第1','第2','第3'], sales: [0,0,0], profit: [0,0,0] });
             const [projectList, setProjectList] = useState([]);
             const [lastYearProjectList, setLastYearProjectList] = useState([]);
+            const [historicalData, setHistoricalData] = useState({});
             const [worksMaster, setWorksMaster] = useState({});
             const [expenseDetails, setExpenseDetails] = useState({ categories: [], monthlyData: [], classMonthlyAgg: {} });
             const [divisionMonthlyData, setDivisionMonthlyData] = useState({ div1: {}, div2: {}, div3: {} });
@@ -663,55 +1178,94 @@
             const handleDrop = useCallback((e) => { e.preventDefault(); setIsDragging(false); Array.from(e.dataTransfer.files).forEach(file => { Papa.parse(file, { complete: (res) => identifyAndProcess(res.data, 'detect'), header: false, skipEmptyLines: true }); }); }, []);
 
             const identifyAndProcess = (rows, type) => {
-                if (type === 'budget') {
-                     const d = DataProcessor.processBudget(rows);
-                     if(d) { setMonthlyData(p=>({...p, ...d.main})); setDivisionMonthlyData(prev => ({ div1: {...prev.div1, ...d.div1}, div2: {...prev.div2, ...d.div2}, div3: {...prev.div3, ...d.div3} })); }
-                } else if (type === 'actual') {
-                     const d = DataProcessor.processBoardSales(rows);
-                     if(d) {
-                         setProjectList(d.projects); setDivisionData({labels:['第1','第2','第3'],sales:[d.divTotal.d1.s, d.divTotal.d2.s, d.divTotal.d3.s], profit:[d.divTotal.d1.p, d.divTotal.d2.p, d.divTotal.d3.p]});
-                         setDivisionMonthlyData(prev => ({ div1: { ...prev.div1, actual: d.divAgg.d1.s, profit: d.divAgg.d1.p, op: (prev.div1.expenses || Array(12).fill(0)).map((e,i)=>d.divAgg.d1.p[i]-e) }, div2: { ...prev.div2, actual: d.divAgg.d2.s, profit: d.divAgg.d2.p, op: (prev.div2.expenses || Array(12).fill(0)).map((e,i)=>d.divAgg.d2.p[i]-e) }, div3: { ...prev.div3, actual: d.divAgg.d3.s, profit: d.divAgg.d3.p, op: (prev.div3.expenses || Array(12).fill(0)).map((e,i)=>d.divAgg.d3.p[i]-e) } }));
-                         setMonthlyData(p=>{ const newActualProfit = d.agg.p; const currentExpenses = p.expenses || Array(12).fill(0); const newOp = newActualProfit.map((val, i) => val - currentExpenses[i]); return {...p, actual:d.agg.s, actualProfit:newActualProfit, operatingProfit: newOp}; });
-                     }
-                } else if (type === 'last_year') {
-                    const d = DataProcessor.processLastYearData(rows); if(d) { setMonthlyData(p=>({...p, lastYear:d.agg.s, lastYearProfit:d.agg.p})); setLastYearClientStats(d.cAgg); setLastYearProjectList(d.lyProjects); }
-                } else if (type === 'expenses') {
-                    const d = DataProcessor.processExpenses(rows);
-                    if(d) {
-                        setMonthlyData(p=> { const newExpenses = d.exp; const currentActualProfit = p.actualProfit || Array(12).fill(0); const newOp = currentActualProfit.map((val, i) => val - newExpenses[i]); return {...p, expenses:newExpenses, operatingProfit: newOp}; });
-                        setDivisionMonthlyData(prev => ({ div1: { ...prev.div1, expenses: d.de.d1, op: (prev.div1.profit||Array(12).fill(0)).map((p,i)=>p-d.de.d1[i]) }, div2: { ...prev.div2, expenses: d.de.d2, op: (prev.div2.profit||Array(12).fill(0)).map((p,i)=>p-d.de.d2[i]) }, div3: { ...prev.div3, expenses: d.de.d3, op: (prev.div3.profit||Array(12).fill(0)).map((p,i)=>p-d.de.d3[i]) } }));
+                if (!rows || rows.length === 0) return;
+                try {
+                    let d;
+                    switch (type) {
+                        case 'budget':
+                            d = DataProcessor.processBudget(rows);
+                            if(d) { setMonthlyData(p=>({...p, ...d.main})); setDivisionMonthlyData(prev => ({ div1: {...prev.div1, ...d.div1}, div2: {...prev.div2, ...d.div2}, div3: {...prev.div3, ...d.div3} })); }
+                            break;
+                        case 'actual':
+                            d = DataProcessor.processBoardSales(rows);
+                            if(d) {
+                                setProjectList(d.projects); setDivisionData({labels:['第1','第2','第3'],sales:[d.divTotal.d1.s, d.divTotal.d2.s, d.divTotal.d3.s], profit:[d.divTotal.d1.p, d.divTotal.d2.p, d.divTotal.d3.p]});
+                                setDivisionMonthlyData(prev => ({ div1: { ...prev.div1, actual: d.divAgg.d1.s, profit: d.divAgg.d1.p, op: (prev.div1.expenses || Array(12).fill(0)).map((e,i)=>d.divAgg.d1.p[i]-e) }, div2: { ...prev.div2, actual: d.divAgg.d2.s, profit: d.divAgg.d2.p, op: (prev.div2.expenses || Array(12).fill(0)).map((e,i)=>d.divAgg.d2.p[i]-e) }, div3: { ...prev.div3, actual: d.divAgg.d3.s, profit: d.divAgg.d3.p, op: (prev.div3.expenses || Array(12).fill(0)).map((e,i)=>d.divAgg.d3.p[i]-e) } }));
+                                setMonthlyData(p=>{ const newActualProfit = d.agg.p; const currentExpenses = p.expenses || Array(12).fill(0); const newOp = newActualProfit.map((val, i) => val - currentExpenses[i]); return {...p, actual:d.agg.s, actualProfit:newActualProfit, operatingProfit: newOp}; });
+                            }
+                            break;
+                        case 'last_year':
+                            d = DataProcessor.processLastYearData(rows);
+                            if(d) { setMonthlyData(p=>({...p, lastYear:d.agg.s, lastYearProfit:d.agg.p})); setLastYearClientStats(d.cAgg); setLastYearProjectList(d.lyProjects); }
+                            break;
+                        case 'expenses':
+                            d = DataProcessor.processExpenses(rows);
+                            if(d) {
+                                setMonthlyData(p=> { const newExpenses = d.exp; const currentActualProfit = p.actualProfit || Array(12).fill(0); const newOp = currentActualProfit.map((val, i) => val - newExpenses[i]); return {...p, expenses:newExpenses, operatingProfit: newOp}; });
+                                setDivisionMonthlyData(prev => ({ div1: { ...prev.div1, expenses: d.de.d1, op: (prev.div1.profit||Array(12).fill(0)).map((p,i)=>p-d.de.d1[i]) }, div2: { ...prev.div2, expenses: d.de.d2, op: (prev.div2.profit||Array(12).fill(0)).map((p,i)=>p-d.de.d2[i]) }, div3: { ...prev.div3, expenses: d.de.d3, op: (prev.div3.profit||Array(12).fill(0)).map((p,i)=>p-d.de.d3[i]) } }));
+                            }
+                            break;
+                        case 'works':
+                            const header = rows[0].map(String), iId = header.findIndex(h => h.includes("管理番号")), iName = header.findIndex(h => h.includes("作品名"));
+                            if (iId !== -1 && iName !== -1) { const m = {}; rows.slice(1).forEach(r => { const id = String(r[iId] || "").trim(), name = String(r[iName] || "").trim(); if (id) m[id] = name; }); setWorksMaster(m); }
+                            break;
+                        case 'expense_details':
+                            d = DataProcessor.processExpenseDetails(rows, monthlyData.labels);
+                            if(d) setExpenseDetails(d);
+                            break;
+                        default:
+                            if (type.startsWith('history_')) {
+                                const period = type.split('_')[1];
+                                d = DataProcessor.processLastYearData(rows);
+                                if (d) setHistoricalData(prev => ({...prev, [period]: { agg: d.agg, projects: d.lyProjects } }));
+                            }
+                            break;
                     }
-                } else if (type === 'works') {
-                    const header = rows[0].map(String), iId = header.findIndex(h => h.includes("管理番号")), iName = header.findIndex(h => h.includes("作品名"));
-                    if (iId !== -1 && iName !== -1) { const m = {}; rows.slice(1).forEach(r => { const id = String(r[iId] || "").trim(), name = String(r[iName] || "").trim(); if (id) m[id] = name; }); setWorksMaster(m); }
-                } else if (type === 'expense_details') {
-                    const d = DataProcessor.processExpenseDetails(rows, monthlyData.labels); if(d) setExpenseDetails(d);
+                } catch(e) {
+                    console.error("Data processing error:", e);
                 }
             };
+
             const fetchFromSpreadsheet = async (url) => {
-                const targetUrl = url || apiUrl; if (!targetUrl) return;
+                const targetUrl = url || apiUrl;
+                if (!targetUrl) return;
                 setIsLoading(true); setLoadingStatus('データ取得中...');
-                const fetchType = async (type) => { try { const res = await fetch(`${targetUrl}${targetUrl.includes('?')?'&':'?'}type=${type}`); setLoadingStatus(`${type} 受信`); const json = JSON.parse(await res.text()); if(json.data) identifyAndProcess(json.data, type); } catch(e) { console.error(e); } };
-                await Promise.all(['actual', 'budget', 'expenses', 'expense_details', 'last_year', 'works'].map(fetchType)); setIsLoading(false);
+                const fetchType = async (type) => {
+                    try {
+                        const res = await fetch(`${targetUrl}${targetUrl.includes('?')?'&':'?'}type=${type}`);
+                        const text = await res.text();
+                        try {
+                            const json = JSON.parse(text);
+                            if(json.data) { identifyAndProcess(json.data, type); }
+                        } catch (parseErr) { console.error(parseErr); }
+                    } catch(e) { console.error(e); }
+                };
+                await Promise.all(['actual', 'budget', 'expenses', 'expense_details', 'last_year', 'works'].map(fetchType));
+                const historyPeriods = [23, 24, 25, 26, 27, 28];
+                await Promise.all(historyPeriods.map(period => fetchType(`history_${period}`)));
+                setIsLoading(false);
             };
             useEffect(() => { const u = localStorage.getItem('gaie_dashboard_api_url'); if(u) { setApiUrl(u); fetchFromSpreadsheet(u); } else setShowSettings(true); }, []);
 
-            const calculateRankedProjects = (list, master) => { const agg = {}; (list||[]).forEach(p => { const key = p.managerId || p.title; if(!agg[key]) agg[key] = { id: p.managerId, name: (master && p.managerId && master[p.managerId]) ? master[p.managerId] : p.title, client: p.client, sales: 0, profit: 0, count: 0, clients: {} }; agg[key].sales += p.sales; agg[key].profit += p.profit; agg[key].count++; const c = p.client||"不明"; agg[key].clients[c] = (agg[key].clients[c]||0)+p.profit; }); return Object.values(agg).map(p => ({ ...p, clientDisplay: Object.entries(p.clients).sort((a,b)=>b[1]-a[1])[0]?.[0] || p.client })).sort((a,b)=>b.profit-a.profit).slice(0, 15); };
-            const calculateRankedClients = (list) => { const agg = {}; (list||[]).forEach(p => { const k = p.client || '不明'; if(!agg[k]) agg[k] = { sales: 0, profit: 0 }; agg[k].sales += p.sales; agg[k].profit += p.profit; }); return Object.entries(agg).map(([name, d]) => ({ name, ...d, margin: d.sales > 0 ? (d.profit / d.sales * 100) : 0 })).sort((a,b) => b.profit - a.profit).slice(0, 10); };
+            const calculateRankedProjects = useCallback((list, master) => { const agg = {}; (list||[]).forEach(p => { const key = p.managerId || p.title; if(!agg[key]) agg[key] = { id: p.managerId, name: (master && p.managerId && master[p.managerId]) ? master[p.managerId] : p.title, client: p.client, sales: 0, profit: 0, count: 0, clients: {} }; agg[key].sales += p.sales; agg[key].profit += p.profit; agg[key].count++; const c = p.client||"不明"; agg[key].clients[c] = (agg[key].clients[c]||0)+p.profit; }); return Object.values(agg).map(p => ({ ...p, clientDisplay: Object.entries(p.clients).sort((a,b)=>b[1]-a[1])[0]?.[0] || p.client })).sort((a,b)=>b.profit-a.profit).slice(0, 15); }, []);
+            const calculateRankedClients = useCallback((list) => { const agg = {}; (list||[]).forEach(p => { const k = p.client || '不明'; if(!agg[k]) agg[k] = { sales: 0, profit: 0 }; agg[k].sales += p.sales; agg[k].profit += p.profit; }); return Object.entries(agg).map(([name, d]) => ({ name, ...d, margin: d.sales > 0 ? (d.profit / d.sales * 100) : 0 })).sort((a,b) => b.profit - a.profit).slice(0, 10); }, []);
 
-            const navItems = [{ id: 'dashboard', label: '全社', icon: 'Dashboard' }, { id: 'division', label: '事業部', icon: 'Layout' }, { id: 'clients', label: 'クライアント', icon: 'Users' }, { id: 'works', label: '作品分析', icon: 'Film' }, { id: 'expenses', label: '販管費', icon: 'CreditCard' }, { id: 'projects', label: '案件管理', icon: 'Briefcase' }];
 
             return (
                 <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-gray-800">
-                    <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm h-14"><div className="max-w-7xl mx-auto w-full h-full px-4 sm:px-8 flex items-center justify-between"><div className="flex items-center gap-3 flex-shrink-0 mr-4"><div className="bg-blue-600 text-white p-1.5 rounded-lg shadow-sm"><Icon name="Activity" size={18} /></div><h1 className="text-base font-bold text-gray-800 tracking-tight hidden sm:block">Gaie Dashboard v12.91</h1></div><nav className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar h-full py-2">{navItems.map(item => (<button key={item.id} onClick={() => setActiveTab(item.id)} className={`${CLS.NAV_BTN} ${activeTab===item.id?CLS.NAV_BTN_ACTIVE:CLS.NAV_BTN_INACTIVE}`}><Icon name={item.icon} size={14} />{item.label}</button>))}</nav><div className="flex items-center gap-3 flex-shrink-0 ml-4 border-l border-gray-100 pl-4 h-8"><button onClick={()=>setShowSettings(true)} className="flex items-center gap-1.5 text-xs font-bold text-gray-600 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-gray-200"><Icon name="Settings" size={14} />連携</button></div></div></header>
+                    <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm h-14"><div className="max-w-7xl mx-auto w-full h-full px-4 sm:px-8 flex items-center justify-between"><div className="flex items-center gap-3 flex-shrink-0 mr-4"><div className="bg-blue-600 text-white p-1.5 rounded-lg shadow-sm"><Icon name="Activity" size={18} /></div><h1 className="text-base font-bold text-gray-800 tracking-tight hidden sm:block">Gaie Dashboard v18.6</h1></div><nav className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar h-full py-2">{navItems.map(item => (<button key={item.id} onClick={() => setActiveTab(item.id)} className={`${CLS.NAV_BTN} ${activeTab===item.id?CLS.NAV_BTN_ACTIVE:CLS.NAV_BTN_INACTIVE}`}><Icon name={item.icon} size={14} />{item.label}</button>))}</nav><div className="flex items-center gap-3 flex-shrink-0 ml-4 border-l border-gray-100 pl-4 h-8"><button onClick={()=>setShowSettings(true)} className="flex items-center gap-1.5 text-xs font-bold text-gray-600 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-gray-200"><Icon name="Settings" size={14} />連携</button></div></div></header>
                     <main className="flex-1 overflow-y-auto p-4 max-w-7xl mx-auto w-full">
-                         {isLoading && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-sm"><div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center max-w-sm w-full relative overflow-hidden"><div className="absolute top-0 left-0 w-full h-1 bg-gray-100"><div className="h-full w-full bg-gradient-to-r from-transparent via-blue-500 to-transparent animate-shimmer -translate-x-full"></div></div><div className="mb-6 relative flex items-center justify-center h-20 w-20"><div className="absolute inset-0 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div><div className="relative bg-white p-4 rounded-full shadow-sm text-blue-600"><Icon name="TrendingUp" size={32} /></div></div><h3 className="text-lg font-bold text-gray-800 mb-2">データを同期中</h3><p className="text-xs text-gray-500 mb-1">{loadingStatus}</p></div></div>}
-                         {activeTab === 'dashboard' && <DashboardPage monthlyData={monthlyData} projectList={projectList} worksMaster={worksMaster} divisionMonthlyData={divisionMonthlyData} divisionData={divisionData} displayMode={displayMode} setDisplayMode={setDisplayMode} opMode={opMode} setOpMode={setOpMode} calculateRankedProjects={calculateRankedProjects} calculateRankedClients={calculateRankedClients} />}
-                         {activeTab === 'expenses' && <ExpensesPage expenseDetails={expenseDetails} monthlyData={monthlyData} requestExpenseSort={requestExpenseSort} expenseSortConfig={expenseSortConfig} />}
-                         {activeTab === 'clients' && <ClientAnalysisPage projectList={projectList} monthlyData={monthlyData} lastYearClientStats={lastYearClientStats} lastYearProjectList={lastYearProjectList} />}
-                         {activeTab === 'works' && <WorkAnalysisPage projectList={projectList} monthlyData={monthlyData} worksMaster={worksMaster} />}
-                         {activeTab === 'division' && <UnifiedDivisionPage divisionMonthlyData={divisionMonthlyData} monthlyData={monthlyData} projectList={projectList} worksMaster={worksMaster} displayMode={displayMode} setDisplayMode={setDisplayMode} divisionOpMode={divisionOpMode} setDivisionOpMode={setDivisionOpMode} calculateRankedProjects={calculateRankedProjects} calculateRankedClients={calculateRankedClients} />}
-                         {activeTab === 'projects' && <ProjectsPage projectList={projectList} monthlyData={monthlyData} worksMaster={worksMaster} />}
+                         {isLoading && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-sm"><div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center max-w-sm w-full relative overflow-hidden"><div className="mb-6 relative flex items-center justify-center h-20 w-20"><div className="absolute inset-0 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div><div className="relative bg-white p-4 rounded-full shadow-sm text-blue-600"><Icon name="TrendingUp" size={32} /></div></div><h3 className="text-lg font-bold text-gray-800 mb-2">データを同期中</h3><p className="text-xs text-gray-500 mb-1">{loadingStatus}</p></div></div>}
+                         <ErrorBoundary>
+                             {activeTab === 'dashboard' && <DashboardPage monthlyData={monthlyData} projectList={projectList} worksMaster={worksMaster} divisionMonthlyData={divisionMonthlyData} divisionData={divisionData} displayMode={displayMode} setDisplayMode={setDisplayMode} opMode={opMode} setOpMode={setOpMode} calculateRankedProjects={calculateRankedProjects} calculateRankedClients={calculateRankedClients} />}
+                             {activeTab === 'expenses' && <ExpensesPage expenseDetails={expenseDetails} monthlyData={monthlyData} requestExpenseSort={requestExpenseSort} expenseSortConfig={expenseSortConfig} />}
+                             {activeTab === 'history' && <HistoricalPage monthlyData={monthlyData} historicalData={historicalData} projectList={projectList} lastYearProjectList={lastYearProjectList} />}
+                             {activeTab === 'clients' && <ClientAnalysisPage projectList={projectList} monthlyData={monthlyData} lastYearClientStats={lastYearClientStats} lastYearProjectList={lastYearProjectList} />}
+                             {activeTab === 'works' && <WorkAnalysisPage projectList={projectList} monthlyData={monthlyData} worksMaster={worksMaster} />}
+                             {activeTab === 'jobs' && <JobAnalysisPage projectList={projectList} monthlyData={monthlyData} />}
+                             {activeTab === 'division' && <UnifiedDivisionPage divisionMonthlyData={divisionMonthlyData} monthlyData={monthlyData} projectList={projectList} worksMaster={worksMaster} displayMode={displayMode} setDisplayMode={setDisplayMode} divisionOpMode={divisionOpMode} setDivisionOpMode={setDivisionOpMode} calculateRankedProjects={calculateRankedProjects} calculateRankedClients={calculateRankedClients} />}
+                             {activeTab === 'projects' && <ProjectsPage projectList={projectList} monthlyData={monthlyData} worksMaster={worksMaster} />}
+                         </ErrorBoundary>
                     </main>
                     {showSettings && <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay"><div className="bg-white p-8 rounded-xl shadow-xl w-full max-w-lg"><h3 className="text-xl font-bold mb-4 flex items-center gap-2"><Icon name="Settings"/> 設定</h3><input type="text" className="w-full border p-3 rounded mb-4" placeholder="API URL" value={apiUrl} onChange={(e)=>setApiUrl(e.target.value)} /><div className="flex justify-end gap-3"><button onClick={()=>setShowSettings(false)} className="px-4 py-2 text-gray-500">キャンセル</button><button onClick={saveSettings} className="px-4 py-2 bg-blue-600 text-white rounded">保存</button></div></div></div>}
                     {isDragging && <div className="fixed inset-0 bg-blue-600/20 backdrop-blur-sm z-50 flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl"><div className="bg-white p-8 rounded-xl shadow-xl text-center"><Icon name="Upload" size={48} className="mx-auto text-blue-500 mb-2"/><h3 className="font-bold">Drop CSV</h3></div></div>}
