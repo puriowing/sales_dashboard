@@ -1149,7 +1149,7 @@
                 { key: 'profit', label: '粗利', align: 'right', render: (r)=>Utils.formatYen(r.profit), className: 'font-bold text-blue-600 font-mono' },
                 // { key: 'sales', label: '売上', align: 'right', render: (r)=>Utils.formatYen(r.sales), className: 'text-gray-600 font-mono' }, // Removed sales
                 { key: 'count', label: '件数', align: 'right', width: 'w-16', render: (r)=>r.count+'件', className: 'text-gray-600 font-mono' },
-                { key: 'margin', label: '粗利率', align: 'right', width: 'w-16', render: (r)=>r.margin.toFixed(1)+'%', className: 'text-gray-500 font-mono' }
+                { key: 'margin', label: '粗利率', align: 'right', width: 'w-20', render: (r)=>r.margin.toFixed(1)+'%', className: 'text-gray-500 font-mono' }
             ];
 
             return (
