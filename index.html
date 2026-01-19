@@ -249,7 +249,7 @@
                         <tbody className="divide-y divide-gray-100">
                             {items.length > 0 ? items.map((item, i) => (
                                 <tr key={i} onClick={() => onRowClick && onRowClick(item)} className={onRowClick ? "hover:bg-blue-50 cursor-pointer transition-colors" : "hover:bg-gray-50"}>
-                                    {columns.map(col => <td key={col.key} style={col.style} className={`px-4 py-3 ${col.className || ''} ${getAlignClass(col.align)} truncate`}>{col.render ? col.render(item, i) : item[col.key]}</td>)}
+                                    {columns.map(col => <td key={col.key} style={col.style} className={`px-4 py-3 ${col.className || ''} ${getAlignClass(col.align)} ${col.noTruncate ? '' : 'truncate'}`}>{col.render ? col.render(item, i) : item[col.key]}</td>)}
                                 </tr>
                             )) : <tr><td colSpan={columns.length} className="p-8 text-center text-gray-400">データがありません</td></tr>}
                         </tbody>
@@ -1013,7 +1013,10 @@
             const [selectedClient, setSelectedClient] = useState(null);
             const [selectedJobCategory, setSelectedJobCategory] = useState(C.CATS[0]);
 
-            const { clientStats, totalStats, tiers, allClientNames, jobCategoryStats, tierCountData, tierProfitData } = useMemo(() => {
+            // 東宝グループのクライアント名リスト
+            const TOHO_GROUP_CLIENTS = ['東宝', 'TOHOマーケティング', '東宝東和', '東和ピクチャーズ'];
+
+            const { clientStats, totalStats, tiers, allClientNames, jobCategoryStats, tierCountData, tierProfitData, tohoComparison } = useMemo(() => {
                 const stats = {}, allNames = new Set(), jobClientStats = {}; C.CATS.forEach(j => jobClientStats[j] = {});
                 (projectList || []).forEach(p => { if(p.client) allNames.add(p.client); });
                 const filtered = (projectList || []).filter(p => (monthFilter === 'all' || Utils.getFiscalMonthIndex(p.date) === Number(monthFilter)) && (divFilter === 'all' || p.div.includes(divFilter)) && (!searchTerm || (p.client && p.client.toLowerCase().includes(searchTerm.toLowerCase()))));
@@ -1030,8 +1033,96 @@
                 let curCum = 0; const t1=[], t2=[], t3=[];
                 cArr.forEach(c => { curCum += c.profit; const r = gProfit > 0 ? (curCum/gProfit) : 0; if (r <= 0.80) { t1.push(c); c.tier = 1; } else if (r <= 0.95) { t2.push(c); c.tier = 2; } else { t3.push(c); c.tier = 3; } });
                 const tierShares = [{ name: 'Tier 1', value: t1.length, profit: t1.reduce((s,c)=>s+c.profit,0) }, { name: 'Tier 2', value: t2.length, profit: t2.reduce((s,c)=>s+c.profit,0) }, { name: 'Tier 3', value: t3.length, profit: t3.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t3.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 }];
-                return { clientStats: cArr, totalStats: { count: cArr.length, profit: gProfit }, tiers: { t1: { count: t1.length, profit: t1.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t1.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 }, t2: { count: t2.length, profit: t2.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t2.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 }, t3: { count: t3.length, profit: t3.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t3.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 } }, allClientNames: Array.from(allNames).sort(), jobCategoryStats: jobClientStats, tierCountData: { labels: tierShares.map(t=>t.name), datasets: [{ data: tierShares.map(t=>t.value), backgroundColor: [C.TIER[1], C.TIER[2], C.TIER[3]] }] }, tierProfitData: { labels: tierShares.map(t=>t.name), datasets: [{ data: tierShares.map(t=>t.profit), backgroundColor: [C.TIER[1], C.TIER[2], C.TIER[3]] }] } };
-            }, [projectList, monthFilter, divFilter, searchTerm, lastYearClientStats]);
+                
+                // 東宝グループとそれ以外の比較データを計算
+                const tohoGroupStats = { sales: 0, profit: 0, count: 0, clientCount: 0, monthly: Array(12).fill(0).map(() => ({ sales: 0, profit: 0 })) };
+                const otherStats = { sales: 0, profit: 0, count: 0, clientCount: 0, monthly: Array(12).fill(0).map(() => ({ sales: 0, profit: 0 })) };
+                const tohoClients = new Set();
+                const otherClients = new Set();
+                
+                filtered.forEach(p => {
+                    const c = p.client || '不明';
+                    const isToho = TOHO_GROUP_CLIENTS.some(name => c.includes(name));
+                    const monthIdx = Utils.getFiscalMonthIndex(p.date);
+                    
+                    if (isToho) {
+                        tohoGroupStats.sales += p.sales;
+                        tohoGroupStats.profit += p.profit;
+                        tohoGroupStats.count += 1;
+                        tohoClients.add(c);
+                        if (monthIdx >= 0 && monthIdx < 12) {
+                            tohoGroupStats.monthly[monthIdx].sales += p.sales;
+                            tohoGroupStats.monthly[monthIdx].profit += p.profit;
+                        }
+                    } else {
+                        otherStats.sales += p.sales;
+                        otherStats.profit += p.profit;
+                        otherStats.count += 1;
+                        otherClients.add(c);
+                        if (monthIdx >= 0 && monthIdx < 12) {
+                            otherStats.monthly[monthIdx].sales += p.sales;
+                            otherStats.monthly[monthIdx].profit += p.profit;
+                        }
+                    }
+                });
+                
+                tohoGroupStats.clientCount = tohoClients.size;
+                otherStats.clientCount = otherClients.size;
+                
+                const tohoMargin = tohoGroupStats.sales > 0 ? (tohoGroupStats.profit / tohoGroupStats.sales * 100) : 0;
+                const otherMargin = otherStats.sales > 0 ? (otherStats.profit / otherStats.sales * 100) : 0;
+                
+                const tohoComparison = {
+                    toho: {
+                        ...tohoGroupStats,
+                        margin: tohoMargin,
+                        share: gProfit > 0 ? (tohoGroupStats.profit / gProfit * 100) : 0
+                    },
+                    other: {
+                        ...otherStats,
+                        margin: otherMargin,
+                        share: gProfit > 0 ? (otherStats.profit / gProfit * 100) : 0
+                    },
+                    comparisonChartData: {
+                        labels: ['売上', '粗利'],
+                        datasets: [
+                            {
+                                label: '東宝グループ',
+                                data: [tohoGroupStats.sales, tohoGroupStats.profit],
+                                backgroundColor: '#3B82F6',
+                                borderRadius: 4
+                            },
+                            {
+                                label: 'その他',
+                                data: [otherStats.sales, otherStats.profit],
+                                backgroundColor: '#94A3B8',
+                                borderRadius: 4
+                            }
+                        ]
+                    },
+                    monthlyChartData: {
+                        labels: monthlyData.labels || [],
+                        datasets: [
+                            {
+                                label: '東宝グループ 粗利',
+                                data: tohoGroupStats.monthly.map(m => m.profit),
+                                borderColor: '#3B82F6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                tension: 0.4
+                            },
+                            {
+                                label: 'その他 粗利',
+                                data: otherStats.monthly.map(m => m.profit),
+                                borderColor: '#94A3B8',
+                                backgroundColor: 'rgba(148, 163, 184, 0.1)',
+                                tension: 0.4
+                            }
+                        ]
+                    }
+                };
+                
+                return { clientStats: cArr, totalStats: { count: cArr.length, profit: gProfit }, tiers: { t1: { count: t1.length, profit: t1.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t1.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 }, t2: { count: t2.length, profit: t2.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t2.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 }, t3: { count: t3.length, profit: t3.reduce((s,c)=>s+c.profit,0), share: gProfit > 0 ? t3.reduce((s,c)=>s+c.profit,0)/gProfit*100 : 0 } }, allClientNames: Array.from(allNames).sort(), jobCategoryStats: jobClientStats, tierCountData: { labels: tierShares.map(t=>t.name), datasets: [{ data: tierShares.map(t=>t.value), backgroundColor: [C.TIER[1], C.TIER[2], C.TIER[3]] }] }, tierProfitData: { labels: tierShares.map(t=>t.name), datasets: [{ data: tierShares.map(t=>t.profit), backgroundColor: [C.TIER[1], C.TIER[2], C.TIER[3]] }] }, tohoComparison };
+            }, [projectList, monthFilter, divFilter, searchTerm, lastYearClientStats, monthlyData.labels]);
 
             const selectedJobRanking = useMemo(() => {
                 const clients = jobCategoryStats[selectedJobCategory] || {};
@@ -1042,24 +1133,23 @@
             if (selectedClient) return <ClientDetailView clientName={selectedClient} projectList={projectList} monthlyLabels={monthlyData.labels} onBack={() => setSelectedClient(null)} lastYearStats={lastYearClientStats} lastYearProjectList={lastYearProjectList} />;
 
             const cols = [
-                { key: 'tier', label: 'Tier', align: 'center', sortable: true, render: (c)=><span className={`px-2 py-1 rounded text-xs font-bold text-white ${c.tier===1?'bg-blue-800':c.tier===2?'bg-blue-500':'bg-gray-400'}`}>{c.tier}</span> },
+                { key: 'tier', label: 'Tier', align: 'center', sortable: true, width: 'w-12', render: (c)=><span className={`px-2 py-1 rounded text-xs font-bold text-white ${c.tier===1?'bg-blue-800':c.tier===2?'bg-blue-500':'bg-gray-400'}`}>{c.tier}</span> },
                 { key: 'name', label: 'クライアント名', sortable: true, className: 'font-medium text-gray-800' },
-                { key: 'mainJob', label: '主要職種', sortable: true, render: (c)=><span className="bg-gray-100 px-2 py-1 rounded">{c.mainJob}</span>, className: 'text-xs text-gray-500' },
-                { key: 'sales', label: '売上', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.sales), className: 'text-gray-600 font-mono' },
-                { key: 'profit', label: '粗利', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.profit), className: (c)=>c.profit>=10000000 ? 'text-indigo-600 font-bold font-mono' : 'text-gray-600 font-bold font-mono' },
-                { key: 'margin', label: '粗利率', align: 'right', sortable: true, render: (c)=>c.margin.toFixed(1)+'%', className: (c)=>c.margin<20?'text-red-500 font-bold font-mono':'text-gray-600 font-mono' },
-                { key: 'lyProfit', label: '昨期粗利', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.lyProfit), className: 'text-gray-500 font-mono' },
-                { key: 'yoy', label: '昨対比', align: 'right', sortable: true, render: (c)=>c.yoy>0?c.yoy.toFixed(0)+'%':'-', className: (c)=>c.yoy>=100?'text-green-600 font-mono':'text-red-500 font-mono' },
-                { key: 'unitPrice', label: '平均単価', align: 'right', sortable: true, render: (c)=>Utils.formatYen(c.unitPrice), className: 'text-gray-500 font-mono' },
-                { key: 'count', label: '件数', align: 'right', sortable: true, className: 'text-gray-600 font-mono' }
+                { key: 'mainJob', label: '主要職種', sortable: true, width: 'w-24', render: (c)=><span className="bg-gray-100 px-2 py-1 rounded">{c.mainJob}</span>, className: 'text-xs text-gray-500' },
+                { key: 'sales', label: '売上', align: 'right', sortable: true, width: 'w-[140px]', noTruncate: true, render: (c)=>Utils.formatYen(c.sales), className: 'text-gray-600 font-mono whitespace-nowrap' },
+                { key: 'profit', label: '粗利', align: 'right', sortable: true, width: 'w-[140px]', noTruncate: true, render: (c)=>Utils.formatYen(c.profit), className: (c)=>c.profit>=10000000 ? 'text-indigo-600 font-bold font-mono whitespace-nowrap' : 'text-gray-600 font-bold font-mono whitespace-nowrap' },
+                { key: 'margin', label: '粗利率', align: 'right', sortable: true, width: 'w-20', render: (c)=>c.margin.toFixed(1)+'%', className: (c)=>c.margin<20?'text-red-500 font-bold font-mono':'text-gray-600 font-mono' },
+                { key: 'yoy', label: '昨対比', align: 'right', sortable: true, width: 'w-20', render: (c)=>c.yoy>0?c.yoy.toFixed(0)+'%':'-', className: (c)=>c.yoy>=100?'text-green-600 font-mono':'text-red-500 font-mono' },
+                { key: 'unitPrice', label: '平均単価', align: 'right', sortable: true, width: 'w-[140px]', noTruncate: true, render: (c)=>Utils.formatYen(c.unitPrice), className: 'text-gray-500 font-mono whitespace-nowrap' },
+                { key: 'count', label: '件数', align: 'right', sortable: true, width: 'w-12', className: 'text-gray-600 font-mono' }
             ];
             const jobCols = [
                 { key: 'index', label: '#', align: 'center', width: 'w-10', render: (r,i)=>i+1, className: 'font-bold text-gray-500' },
                 { key: 'name', label: 'クライアント', className: 'font-medium text-gray-800' },
                 { key: 'profit', label: '粗利', align: 'right', render: (r)=>Utils.formatYen(r.profit), className: 'font-bold text-blue-600 font-mono' },
                 // { key: 'sales', label: '売上', align: 'right', render: (r)=>Utils.formatYen(r.sales), className: 'text-gray-600 font-mono' }, // Removed sales
-                { key: 'count', label: '件数', align: 'right', render: (r)=>r.count+'件', className: 'text-gray-600 font-mono' },
-                { key: 'margin', label: '粗利率', align: 'right', render: (r)=>r.margin.toFixed(1)+'%', className: 'text-gray-500 font-mono' }
+                { key: 'count', label: '件数', align: 'right', width: 'w-16', render: (r)=>r.count+'件', className: 'text-gray-600 font-mono' },
+                { key: 'margin', label: '粗利率', align: 'right', width: 'w-16', render: (r)=>r.margin.toFixed(1)+'%', className: 'text-gray-500 font-mono' }
             ];
 
             return (
@@ -1070,6 +1160,109 @@
                         <div className="bg-white p-5 rounded-xl card-shadow"><h3 className="text-xs font-medium text-gray-500 mb-1">合計</h3><div className="flex items-end gap-2"><span className="text-lg font-bold text-gray-800">{totalStats.count}社</span></div><div className="text-xl font-bold text-green-600">{Utils.formatYen(totalStats.profit)}</div></div>
                     </div>
                     <div className="bg-white p-6 rounded-xl card-shadow mb-6"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800">Tier別 構成比 (社数 vs 粗利)</h2></div><div className="grid grid-cols-1 md:grid-cols-2 gap-8"><div><h4 className="text-xs text-center font-bold text-gray-500 mb-2">社数構成比</h4><div className="h-64"><ChartComponent type="doughnut" data={tierCountData} options={{ plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (c) => `${c.label}: ${c.raw}社 (${(c.raw/totalStats.count*100).toFixed(1)}%)` } } } }} /></div></div><div><h4 className="text-xs text-center font-bold text-gray-500 mb-2">粗利構成比</h4><div className="h-64"><ChartComponent type="doughnut" data={tierProfitData} options={{ plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (c) => `${c.label}: ${Utils.formatYen(c.raw)} (${(c.raw/totalStats.profit*100).toFixed(1)}%)` } } } }} /></div></div></div></div>
+                    <div className="bg-white p-4 rounded-xl card-shadow mb-6">
+                        <div className="flex justify-between items-center mb-3">
+                            <h2 className="text-lg font-bold text-gray-800">東宝グループ vs その他 比較分析</h2>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            <div className="bg-gradient-to-br from-blue-50 via-blue-50 to-blue-100 p-4 rounded-xl border-l-4 border-blue-500 shadow-sm">
+                                <div className="flex items-center justify-between mb-2">
+                                    <h3 className="text-base font-bold text-blue-800">東宝グループ</h3>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <div className="bg-white/60 rounded-lg p-2 border border-blue-200">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-medium text-gray-600">クライアント数</span>
+                                            <span className="text-sm font-bold text-blue-800">{tohoComparison.toho.clientCount}社</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-white/60 rounded-lg p-2 border border-blue-200">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-medium text-gray-600">売上</span>
+                                            <span className="text-sm font-bold text-blue-700 font-mono">{Utils.formatYen(tohoComparison.toho.sales)}</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-blue-100 rounded-lg p-2.5 border-2 border-blue-300">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-medium text-blue-800">粗利</span>
+                                            <span className="text-sm font-bold text-blue-900 font-mono">{Utils.formatYen(tohoComparison.toho.profit)}</span>
+                                        </div>
+                                        <div className="mt-1.5 pt-1.5 border-t border-blue-300 flex justify-between items-center">
+                                            <span className="text-sm text-blue-700">粗利率</span>
+                                            <span className="text-sm font-bold text-blue-800">{tohoComparison.toho.margin.toFixed(1)}%</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-white/60 rounded-lg p-2 border border-blue-200">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-medium text-gray-600">粗利シェア</span>
+                                            <span className="text-sm font-bold text-blue-700">{tohoComparison.toho.share.toFixed(1)}%</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-white/60 rounded-lg p-2 border border-blue-200">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-medium text-gray-600">案件数</span>
+                                            <span className="text-sm font-bold text-gray-800">{tohoComparison.toho.count}件</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100 p-4 rounded-xl border-l-4 border-gray-400 shadow-sm">
+                                <div className="flex items-center justify-between mb-2">
+                                    <h3 className="text-base font-bold text-gray-800">その他</h3>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <div className="bg-white/60 rounded-lg p-2 border border-gray-200">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-medium text-gray-600">クライアント数</span>
+                                            <span className="text-sm font-bold text-gray-800">{tohoComparison.other.clientCount}社</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-white/60 rounded-lg p-2 border border-gray-200">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-medium text-gray-600">売上</span>
+                                            <span className="text-sm font-bold text-gray-700 font-mono">{Utils.formatYen(tohoComparison.other.sales)}</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-gray-100 rounded-lg p-2.5 border-2 border-gray-300">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-medium text-gray-800">粗利</span>
+                                            <span className="text-sm font-bold text-gray-900 font-mono">{Utils.formatYen(tohoComparison.other.profit)}</span>
+                                        </div>
+                                        <div className="mt-1.5 pt-1.5 border-t border-gray-300 flex justify-between items-center">
+                                            <span className="text-sm text-gray-700">粗利率</span>
+                                            <span className="text-sm font-bold text-gray-800">{tohoComparison.other.margin.toFixed(1)}%</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-white/60 rounded-lg p-2 border border-gray-200">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-medium text-gray-600">粗利シェア</span>
+                                            <span className="text-sm font-bold text-gray-700">{tohoComparison.other.share.toFixed(1)}%</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-white/60 rounded-lg p-2 border border-gray-200">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-medium text-gray-600">案件数</span>
+                                            <span className="text-sm font-bold text-gray-800">{tohoComparison.other.count}件</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                <h4 className="text-xs font-bold text-gray-700 mb-2 text-center">売上・粗利 比較</h4>
+                                <div className="h-56 bg-white rounded-lg p-2">
+                                    <ChartComponent type="bar" data={tohoComparison.comparisonChartData} options={{ scales: { y: { ticks: { callback: v => Utils.formatYen(v) } } }, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${Utils.formatYen(c.raw)}` } } } }} />
+                                </div>
+                            </div>
+                            <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                <h4 className="text-xs font-bold text-gray-700 mb-2 text-center">月次粗利 推移比較</h4>
+                                <div className="h-56 bg-white rounded-lg p-2">
+                                    <ChartComponent type="line" data={tohoComparison.monthlyChartData} options={{ scales: { y: { ticks: { callback: v => Utils.formatYen(v) } } }, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${Utils.formatYen(c.raw)}` } } } }} />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div className="bg-white p-6 rounded-xl card-shadow mb-6"><div className="flex flex-col md:flex-row justify-between items-center mb-6"><h2 className="text-lg font-bold text-gray-800 mb-2 md:mb-0">職種別 クライアントランキング (粗利TOP10)</h2><div className="flex bg-gray-100 p-1 rounded-lg overflow-x-auto no-scrollbar max-w-full">{C.CATS.map(cat => (<button key={cat} onClick={() => setSelectedJobCategory(cat)} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all whitespace-nowrap ${selectedJobCategory === cat ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{cat}</button>))}</div></div><div className="grid grid-cols-1 lg:grid-cols-2 gap-8"><div className="h-80 w-full"><ChartComponent type="bar" data={selectedJobRanking.chartData} options={{ indexAxis: 'y', scales: { x: { ticks: { callback: v => Utils.formatYen(v) } } }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `粗利: ${Utils.formatYen(c.raw)}` } } } }} /></div><DataTable columns={jobCols} data={selectedJobRanking.items.map((r,i)=>({...r, _index:i}))} height="h-80" onRowClick={(r)=>setSelectedClient(r.name)} /></div></div>
                     <div className="bg-white p-6 rounded-xl card-shadow"><h2 className="text-lg font-bold text-gray-800 mb-4">全クライアント 実績詳細一覧</h2><DataTable columns={cols} data={clientStats} defaultSort={{key:'profit', direction:'descending'}} onRowClick={(c)=>setSelectedClient(c.name)} /></div>
                 </div>
