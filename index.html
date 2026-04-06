@@ -11,6 +11,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparser.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous"></script>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc; color: #334155; }
         .chart-container { position: relative; width: 100%; height: 100%; }
@@ -70,7 +72,9 @@
             TIER: { 1: '#1e3a8a', 2: '#3b82f6', 3: '#cbd5e1' }
         };
         const ICONS = {
-            Dashboard: "M3 3h7v9H3zm14 0h7v5h-7zm0 9h7v9h-7zM3 16h7v5H3z", PieChart: "M21.21 15.89A10 10 0 1 1 8 2.83 M22 12A10 10 0 0 0 12 2v10z", Activity: "M22 12h-4l-3 9L9 3l-3 9H2", Target: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8z", Cloud: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z", Star: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z", Info: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4v4m0 4h.01", Layout: "M3 3h18v18H3zM3 9h18M9 21V9", CreditCard: "M18 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2-2v12a2 2 0 0 1-2 2zm0 0H4M2 10h20", Users: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75", BarChart: "M12 20V10 M18 20V4 M6 20v-4", ArrowLeft: "M19 12H5M12 19l-7-7 7-7", ExternalLink: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3", Briefcase: "rect:2,7,20,14,2,2|path:M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16", TrendingUp: "polyline:23 6 13.5 15.5 8.5 10.5 1 18|polyline:17 6 23 6 23 12", Search: "circle:11,11,8|line:21,21,16.65,16.65", Settings: "circle:12,12,3|path:M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z", SortAsc: "path:M12 19V5|path:m5 12 7-7 7 7", SortDesc: "path:M12 5v14|path:m19 12-7 7-7", Alert: "path:M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01", Calendar: "rect:3,4,18,18,2,2|line:16,2,16,6|line:8,2,8,6|line:3,10,21,10", Upload: "path:M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|polyline:17 8 12 3 7 8|line:12,3,12,15", Div1: "circle:12,12,10|text:1", Div2: "rect:4,4,16,16,2|text:2", Div3: "polygon:12 2 22 22 2 22|text:3", Tier1: "circle:12,12,10|text:1", Tier2: "circle:12,12,10|text:2", Tier3: "circle:12,12,10|text:3", Film: "rect:2,2,20,20,2.18,2.18|line:7,2,7,22|line:17,2,17,22|line:2,12,22,12|line:2,7,7,7|line:2,17,7,17|line:17,7,22,7|line:17,17,22,17", History: "circle:12,12,9|polyline:12 6 12 12 16 14"
+            Dashboard: "M3 3h7v9H3zm14 0h7v5h-7zm0 9h7v9h-7zM3 16h7v5H3z", PieChart: "M21.21 15.89A10 10 0 1 1 8 2.83 M22 12A10 10 0 0 0 12 2v10z", Activity: "M22 12h-4l-3 9L9 3l-3 9H2", Target: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8z", Cloud: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z", Star: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14l-5-4.87 6.91-1.01L12 2z", Info: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4v4m0 4h.01", Layout: "M3 3h18v18H3zM3 9h18M9 21V9", CreditCard: "M18 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2-2v12a2 2 0 0 1-2 2zm0 0H4M2 10h20", Users: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75", BarChart: "M12 20V10 M18 20V4 M6 20v-4", ArrowLeft: "M19 12H5M12 19l-7-7 7-7", ExternalLink: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3", Briefcase: "rect:2,7,20,14,2,2|path:M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16", TrendingUp: "polyline:23 6 13.5 15.5 8.5 10.5 1 18|polyline:17 6 23 6 23 12", Search: "circle:11,11,8|line:21,21,16.65,16.65", Settings: "circle:12,12,3|path:M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z", SortAsc: "path:M12 19V5|path:m5 12 7-7 7 7", SortDesc: "path:M12 5v14|path:m19 12-7 7-7", Alert: "path:M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01", Calendar: "rect:3,4,18,18,2,2|line:16,2,16,6|line:8,2,8,6|line:3,10,21,10", Upload: "path:M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|polyline:17 8 12 3 7 8|line:12,3,12,15", Div1: "circle:12,12,10|text:1", Div2: "rect:4,4,16,16,2|text:2", Div3: "polygon:12 2 22 22 2 22|text:3", Tier1: "circle:12,12,10|text:1", Tier2: "circle:12,12,10|text:2", Tier3: "circle:12,12,10|text:3", Film: "rect:2,2,20,20,2.18,2.18|line:7,2,7,22|line:17,2,17,22|line:2,12,22,12|line:2,7,7,7|line:2,17,7,17|line:17,7,22,7|line:17,17,22,17", History: "circle:12,12,9|polyline:12 6 12 12 16 14",
+            Download: "path:M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|polyline:7 10 12 15 17 10|line:12,15,12,3",
+            FileText: "path:M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z|polyline:14 2 14 8 20 8|line:16,13,8,13|line:16,17,8,17|polyline:10 9 9 9 8 9"
         };
         const CLS = { TH: "px-4 py-3 text-xs font-semibold text-gray-500 uppercase bg-gray-100 border-b border-gray-200 whitespace-nowrap sticky top-0 z-10 select-none", TD: "px-4 py-4 text-sm text-gray-700 border-b border-gray-100 align-middle", NAV_BTN: "px-4 py-2 rounded-full text-sm font-medium transition-colors duration-200 cursor-pointer flex items-center justify-start gap-1 select-none whitespace-nowrap flex-shrink-0 border border-gray-300", NAV_BTN_ACTIVE: "bg-blue-600 text-white shadow-lg shadow-blue-500/50 font-extrabold border-blue-700", NAV_BTN_INACTIVE: "bg-white text-gray-700 hover:bg-blue-50 hover:border-blue-400 hover:text-blue-700" };
 
@@ -107,18 +111,105 @@
                 const agg = { s: Array(12).fill(0), p: Array(12).fill(0) }, cAgg = {}; const lyProjects = [];
                 rows.slice(headerIndex + 1).forEach(r => {
                     if (!r || !Array.isArray(r)) return;
-                    const dateStr = r[idx.D], m = Utils.getFiscalMonthIndex(dateStr), s = Utils.parseCurrency(r[idx.S]), p = Utils.parseCurrency(r[idx.P]), client = idx.C !== -1 ? (r[idx.C] || "不明").trim() : "不明";
+                    const dateStr = r[idx.D], m = Utils.getFiscalMonthIndex(dateStr), s = Utils.parseCurrency(r[idx.S]), p = Utils.parseCurrency(r[idx.P]), client = idx.C !== -1 ? String(r[idx.C] || "不明").trim() : "不明";
                     if (m >= 0) { agg.s[m] += s / 1000; agg.p[m] += p / 1000; if (!cAgg[client]) cAgg[client] = { sales: 0, profit: 0, monthly: Array(12).fill(0).map(() => ({ sales: 0, profit: 0 })) }; cAgg[client].sales += s; cAgg[client].profit += p; cAgg[client].monthly[m].sales += s; cAgg[client].monthly[m].profit += p; }
                     if (client) lyProjects.push({ id: idx.Code >= 0 ? r[idx.Code] : '-', title: idx.T >= 0 ? r[idx.T] : '不明', client, sales: s, profit: p, date: dateStr, div: "不明", job: idx.J >= 0 ? r[idx.J] : "その他", regDate: idx.Reg >= 0 ? String(r[idx.Reg] || "").trim() : "", managerId: idx.Code >= 0 ? String(r[idx.Code] || "").trim() : "" });
                 });
                 return { agg, cAgg, lyProjects };
             },
             processBudget: (rows) => {
-                if (!rows || !Array.isArray(rows)) return null;
-                let hIdx = rows.findIndex(r => r && Array.isArray(r) && r.join("").includes("月")); if (hIdx === -1) return null;
-                const colMap = []; rows[hIdx].forEach((c, i) => { const m = String(c).match(/(\d+)月/); if (m) { let f = parseInt(m[1]) - 3; if (f < 0) f += 12; colMap[f] = i; } });
-                const get = (k) => { const r = rows.find(row => row && row[0] && String(row[0]).replace(/[\s　]/g, "").includes(k)); if (!r) return Array(12).fill(0); const d = Array(12).fill(0); colMap.forEach((c, m) => { if (c !== undefined) d[m] = Utils.parseCurrency(r[c]) / 1000; }); return d; };
-                return { main: { budget: get("売上予算（全社）"), budgetProfit: get("粗利予算（全社）"), expensesBudget: get("販管費予算（全社）"), operatingProfitBudget: get("営業利益予算（全社）") }, div1: { budget: get("売上予算（第1"), budgetProfit: get("粗利予算（第1"), expensesBudget: get("販管費予算（第1"), opBudget: get("営業利益予算（第1") }, div2: { budget: get("売上予算（第2"), budgetProfit: get("粗利予算（第2"), expensesBudget: get("販管費予算（第2"), opBudget: get("営業利益予算（第2") }, div3: { budget: get("売上予算（第3"), budgetProfit: get("粗利予算（第3"), expensesBudget: get("販管費予算（第3"), opBudget: get("営業利益予算（第3") } };
+                if (!rows || !Array.isArray(rows)) { console.log('[Budget] No rows or not array'); return null; }
+                // 空行をスキップしてデータ行のみ取得
+                const dataRows = rows.filter(r => r && Array.isArray(r) && r.some(c => c !== null && c !== undefined && String(c).trim() !== ''));
+                console.log('[Budget] Processing', dataRows.length, 'non-empty rows. First 5 rows:', dataRows.slice(0, 5));
+                
+                // ヘッダー行を探す（月が含まれる行）
+                let hIdx = dataRows.findIndex(r => {
+                    const rowStr = r.map(c => String(c || '')).join(' ');
+                    return rowStr.includes('月') && (rowStr.includes('3月') || rowStr.includes('4月'));
+                });
+                // 月が見つからない場合、数字のみの列が並ぶ行を探す
+                if (hIdx === -1) {
+                    hIdx = dataRows.findIndex(r => {
+                        const nums = r.filter(c => /^\d{1,2}$/.test(String(c).trim()));
+                        return nums.length >= 6; // 少なくとも6つの月が数字で表記
+                    });
+                }
+                if (hIdx === -1) { console.log('[Budget] Header row not found. Available rows:', dataRows.slice(0, 3)); return null; }
+                console.log('[Budget] Header row index:', hIdx, 'Header:', dataRows[hIdx]);
+                
+                // 月→列のマッピングを作成
+                const colMap = [];
+                dataRows[hIdx].forEach((c, i) => {
+                    const cStr = String(c || '').trim();
+                    // "3月", "4月" 形式、または "3", "4" 形式に対応
+                    const m = cStr.match(/^(\d{1,2})月?$/);
+                    if (m) {
+                        const monthNum = parseInt(m[1]);
+                        if (monthNum >= 1 && monthNum <= 12) {
+                            let f = monthNum - 3; if (f < 0) f += 12;
+                            colMap[f] = i;
+                        }
+                    }
+                });
+                console.log('[Budget] Column mapping (fiscal month -> col index):', colMap);
+                if (colMap.filter(c => c !== undefined).length === 0) {
+                    console.log('[Budget] No columns mapped. Header cells:', dataRows[hIdx]);
+                    return null;
+                }
+                // データ行をヘッダー以降から検索するように調整
+                const searchRows = dataRows.slice(hIdx + 1);
+                const norm = (s) => (s || '').replace(/[\s　]/g, '').replace(/（/g, '(').replace(/）/g, ')').replace(/[""]/g, '');
+                // 複数のキーワードで検索を試みる（ヘッダー以降のデータ行から検索）
+                const getMulti = (...keys) => {
+                    for (const k of keys) {
+                        const nk = norm(k);
+                        const r = searchRows.find(row => {
+                            if (!row || !Array.isArray(row)) return false;
+                            const rowStr = row.slice(0, 5).map(c => norm(String(c || ''))).join('');
+                            return rowStr.includes(nk);
+                        });
+                        if (r) {
+                            console.log('[Budget] Found row for', k, ':', r.slice(0, 5));
+                            const d = Array(12).fill(0);
+                            colMap.forEach((c, m) => { if (c !== undefined && r[c] !== undefined) d[m] = Utils.parseCurrency(r[c]) / 1000; });
+                            if (d.some(v => v !== 0)) {
+                                console.log('[Budget] Data for', k, ':', d);
+                                return d;
+                            }
+                        }
+                    }
+                    console.log('[Budget] Row not found for keys:', keys);
+                    return Array(12).fill(0);
+                };
+                const result = {
+                    main: {
+                        budget: getMulti("売上予算（全社）", "売上予算(全社)", "売上予算 全社", "売上予算"),
+                        budgetProfit: getMulti("粗利予算（全社）", "粗利予算(全社)", "粗利予算 全社", "粗利予算"),
+                        expensesBudget: getMulti("販管費予算（全社）", "販管費予算(全社)", "販管費予算 全社", "販管費予算"),
+                        operatingProfitBudget: getMulti("営業利益予算（全社）", "営業利益予算(全社)", "営業利益予算 全社", "営業利益予算")
+                    },
+                    div1: {
+                        budget: getMulti("売上予算（第1事業部）", "売上予算(第1事業部)", "売上予算（第1）", "売上予算 第1"),
+                        budgetProfit: getMulti("粗利予算（第1事業部）", "粗利予算(第1事業部)", "粗利予算（第1）", "粗利予算 第1"),
+                        expensesBudget: getMulti("販管費予算（第1事業部）", "販管費予算(第1事業部)", "販管費予算（第1）", "販管費予算 第1"),
+                        opBudget: getMulti("営業利益予算（第1事業部）", "営業利益予算(第1事業部)", "営業利益予算（第1）", "営業利益予算 第1")
+                    },
+                    div2: {
+                        budget: getMulti("売上予算（第2事業部）", "売上予算(第2事業部)", "売上予算（第2）", "売上予算 第2"),
+                        budgetProfit: getMulti("粗利予算（第2事業部）", "粗利予算(第2事業部)", "粗利予算（第2）", "粗利予算 第2"),
+                        expensesBudget: getMulti("販管費予算（第2事業部）", "販管費予算(第2事業部)", "販管費予算（第2）", "販管費予算 第2"),
+                        opBudget: getMulti("営業利益予算（第2事業部）", "営業利益予算(第2事業部)", "営業利益予算（第2）", "営業利益予算 第2")
+                    },
+                    div3: {
+                        budget: getMulti("売上予算（第3事業部）", "売上予算(第3事業部)", "売上予算（第3）", "売上予算 第3"),
+                        budgetProfit: getMulti("粗利予算（第3事業部）", "粗利予算(第3事業部)", "粗利予算（第3）", "粗利予算 第3"),
+                        expensesBudget: getMulti("販管費予算（第3事業部）", "販管費予算(第3事業部)", "販管費予算（第3）", "販管費予算 第3"),
+                        opBudget: getMulti("営業利益予算（第3事業部）", "営業利益予算(第3事業部)", "営業利益予算（第3）", "営業利益予算 第3")
+                    }
+                };
+                console.log('[Budget] Final result:', result);
+                return result;
             },
             processBoardSales: (rows) => {
                 if (!rows || !Array.isArray(rows)) return null;
@@ -169,7 +260,7 @@
                 let actData = actual || Array(12).fill(0), budData = budget || Array(12).fill(0);
                 if (isCumulative) { actData = Utils.calculateCumulative(actData); budData = Utils.calculateCumulative(budData); }
                 const actYen = actData.map(v => v * 1000), budYen = budData.map(v => v * 1000), gapYen = actYen.map((a, i) => a - budYen[i]), isExp = label.includes("販管費");
-                return { labels: labels || [], datasets: [{ type: 'bar', label: '実績', data: actYen, backgroundColor: isExp ? C.COLORS.expenses : C.COLORS.operatingProfit, order: 2 }, { type: 'bar', label: '予実GAP', data: gapYen, backgroundColor: (ctx) => (isExp ? (ctx.raw > 0 ? C.COLORS.gapP : C.COLORS.gapM) : (ctx.raw >= 0 ? C.COLORS.gapM : C.COLORS.gapP)), order: 3 }, { type: 'line', label: '予算', data: budYen, borderColor: C.COLORS.budget, borderDash: [5, 5], fill: false, order: 1 }] };
+                return { labels: labels || [], datasets: [{ type: 'bar', label: '実績', data: actYen, backgroundColor: isExp ? C.COLORS.expenses : C.COLORS.operatingProfit, order: 2 }, { type: 'bar', label: '予実GAP', data: gapYen, backgroundColor: (ctx) => (isExp ? (ctx.raw > 0 ? C.COLORS.gapP : C.COLORS.gapM) : (ctx.raw >= 0 ? C.COLORS.gapM : C.COLORS.gapP)), order: 3 }, { type: 'line', label: '予算', data: budYen, borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5, 5], fill: false, order: 4, pointRadius: 3, pointHoverRadius: 5 }] };
             }
         };
 
@@ -1264,7 +1355,7 @@
 
             const rankedProjects = calculateRankedProjects(projectList, worksMaster);
             const rankedClients = calculateRankedClients(projectList);
-            const chartData = { labels: monthlyData.labels, datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?monthlyData.actual||[]:monthlyData.actualProfit||[]).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 3, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?monthlyData.actual||[]:monthlyData.actualProfit||[]).map((v,i)=>v*1000-(displayMode==='sales'?(monthlyData.budget||[])[i]:(monthlyData.budgetProfit||[])[i])*1000), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 4, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?monthlyData.budget||[]:monthlyData.budgetProfit||[]).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5, 5], fill: false, order: 2 }, { type: 'line', label: '昨期実績', data: (displayMode==='sales'?monthlyData.lastYear||[]:monthlyData.lastYearProfit||[]).map(v=>v*1000), borderColor: '#cbd5e1', borderWidth: 2, fill: false, order: 1, tension: 0.3, pointRadius: 0 }] };
+            const chartData = { labels: monthlyData.labels, datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?monthlyData.actual||[]:monthlyData.actualProfit||[]).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 3, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?monthlyData.actual||[]:monthlyData.actualProfit||[]).map((v,i)=>v*1000-(displayMode==='sales'?(monthlyData.budget||[])[i]:(monthlyData.budgetProfit||[])[i])*1000), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 4, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?monthlyData.budget||[]:monthlyData.budgetProfit||[]).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5, 5], fill: false, order: 4, pointRadius: 3, pointHoverRadius: 5 }, { type: 'line', label: '昨期実績', data: (displayMode==='sales'?monthlyData.lastYear||[]:monthlyData.lastYearProfit||[]).map(v=>v*1000), borderColor: '#cbd5e1', borderWidth: 2, fill: false, order: 1, tension: 0.3, pointRadius: 0 }] };
 
             return (
                 <div className="space-y-6">
@@ -1312,7 +1403,7 @@
                          <StatCard title={`${divLabel} 累計粗利`} value={Utils.formatYen(totalProfitAct)} budget={totalProfitBud>0?Utils.formatYen(totalProfitBud):null} achievement={totalProfitBud>0?totalProfitAct/totalProfitBud*100:0} subValue={totalProfitBud>0?`GAP: ${Utils.formatYen(totalProfitAct-totalProfitBud)}`:"-"} trend={totalProfitAct>=totalProfitBud?'up':'down'} />
                          <div className="bg-white p-5 rounded-xl card-shadow flex justify-between items-center"><div><h3 className="text-xs font-medium text-gray-500 mb-1">粗利率</h3><div className="text-2xl font-bold text-gray-800 mb-1">{(totalSalesAct>0?totalProfitAct/totalSalesAct*100:0).toFixed(1)}%</div></div><div className="text-gray-300"><Icon name="Activity" size={40} /></div></div>
                     </div>
-                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">{divLabel} 予実推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={viewMode} onChange={setViewMode} /></div></div>{viewMode === 'chart' ? <div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: monthlyData.labels || [], datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?(divData.actual||[]):(divData.profit||[])).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 2, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?(divData.actual||[]):(divData.profit||[])).map((v,i)=>{ const bud = displayMode==='sales'?(divData.budget||[])[i]:(divData.budgetProfit||[])[i]; return v*1000-(bud||0)*1000; }), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 3, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?(divData.budget||[]):(divData.budgetProfit||[])).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5,5], fill: false, order: 1 }] }} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const budget = (displayMode === 'sales' ? (divData.budget || [])[i] : (divData.budgetProfit || [])[i]) || 0; const actual = (displayMode === 'sales' ? (divData.actual || [])[i] : (divData.profit || [])[i]) || 0; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-500">ー</td><td className="px-4 py-3 border-b text-right text-gray-500">ー</td></tr>; })}</tbody></table></div>}</div>
+                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">{divLabel} 予実推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={viewMode} onChange={setViewMode} /></div></div>{viewMode === 'chart' ? <div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: monthlyData.labels || [], datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?(divData.actual||[]):(divData.profit||[])).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 2, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?(divData.actual||[]):(divData.profit||[])).map((v,i)=>{ const bud = displayMode==='sales'?(divData.budget||[])[i]:(divData.budgetProfit||[])[i]; return v*1000-(bud||0)*1000; }), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 3, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?(divData.budget||[]):(divData.budgetProfit||[])).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5,5], fill: false, order: 4, pointRadius: 3, pointHoverRadius: 5 }] }} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const budget = (displayMode === 'sales' ? (divData.budget || [])[i] : (divData.budgetProfit || [])[i]) || 0; const actual = (displayMode === 'sales' ? (divData.actual || [])[i] : (divData.profit || [])[i]) || 0; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-500">ー</td><td className="px-4 py-3 border-b text-right text-gray-500">ー</td></tr>; })}</tbody></table></div>}</div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'monthly', label:'月次'}, {value:'cumulative', label:'累計'}]} value={opMode} onChange={setOpMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={opViewMode} onChange={setOpViewMode} /></div></div>{opViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', divData.op, divData.opBudget, opMode==='cumulative', monthlyData.labels)} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const actualData = opMode === 'cumulative' ? Utils.calculateCumulative(divData.op || []) : (divData.op || []); const budgetData = opMode === 'cumulative' ? Utils.calculateCumulative(divData.opBudget || []) : (divData.opBudget || []); const budget = (budgetData[i] || 0) * 1000; const actual = (actualData[i] || 0) * 1000; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap)}</td></tr>; })}</tbody></table></div>}</div><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">販管費 推移</h2><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={expenseViewMode} onChange={setExpenseViewMode} /></div>{expenseViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', divData.expenses, divData.expensesBudget, false, monthlyData.labels)} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const budget = ((divData.expensesBudget || [])[i] || 0) * 1000; const actual = ((divData.expenses || [])[i] || 0) * 1000; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap <= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap)}</td></tr>; })}</tbody></table></div>}</div></div>
                     <RankedProjectsSection projects={rankedProjects} title={`${divLabel} 粗利ランキング (Top 15)`} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><RankedClientsSection clients={rankedClients} /><ProfitShareSection projects={filteredProjects} title={`${divLabel} 職種別 構成`} /></div>
@@ -1332,7 +1423,435 @@
             );
         }
 
-        const navItems = [{ id: 'dashboard', label: '全社', icon: 'Dashboard' }, { id: 'division', label: '事業部', icon: 'Layout' }, { id: 'history', label: '過去比較', icon: 'History' }, { id: 'clients', label: 'クライアント', icon: 'Users' }, { id: 'works', label: '作品', icon: 'Film' }, { id: 'jobs', label: '職種', icon: 'BarChart' }, { id: 'expenses', label: '販管費', icon: 'CreditCard' }, { id: 'projects', label: '案件管理', icon: 'Briefcase' }];
+        function SummaryReportPage({ monthlyData, projectList, worksMaster, divisionMonthlyData }) {
+            const lastDataMonth = useMemo(() => { const a = monthlyData.actual || []; for (let i = a.length - 1; i >= 0; i--) { if (a[i] > 0) return i; } return 0; }, [monthlyData.actual]);
+            const [startMonth, setStartMonth] = useState(lastDataMonth);
+            const [endMonth, setEndMonth] = useState(lastDataMonth);
+            useEffect(() => { setStartMonth(lastDataMonth); setEndMonth(lastDataMonth); }, [lastDataMonth]);
+            const reportRef = useRef(null);
+            const [isGenerating, setIsGenerating] = useState(false);
+
+            const safeEnd = Math.max(startMonth, endMonth);
+
+            const judge = useCallback((budgetPct, yoyPct) => {
+                const b = budgetPct || 0, y = yoyPct || 0;
+                if (b >= 110 && y >= 105) return { label: 'EXCELLENT', color: '#059669', bg: '#d1fae5', border: '#059669', stars: 5 };
+                if (b >= 100 && y >= 100) return { label: 'GOOD', color: '#2563eb', bg: '#dbeafe', border: '#2563eb', stars: 4 };
+                if (b >= 90 || y >= 95) return { label: 'AVERAGE', color: '#d97706', bg: '#fef3c7', border: '#d97706', stars: 3 };
+                return { label: 'NOT GOOD', color: '#dc2626', bg: '#fee2e2', border: '#dc2626', stars: 2 };
+            }, []);
+
+            const rd = useMemo(() => {
+                const from = startMonth, to = safeEnd;
+                const labels = monthlyData.labels || [];
+                const rangeSum = (arr) => (arr || []).slice(from, to + 1).reduce((s, v) => s + (v || 0), 0) * 1000;
+                const fullArr = (arr) => (arr || []).map(v => (v || 0) * 1000);
+                const isSingle = from === to;
+                const periodLabel = isSingle ? labels[from] : `${labels[from]}〜${labels[to]}`;
+
+                const sales = rangeSum(monthlyData.actual), salesB = rangeSum(monthlyData.budget);
+                const profit = rangeSum(monthlyData.actualProfit), profitB = rangeSum(monthlyData.budgetProfit);
+                const exp = rangeSum(monthlyData.expenses), expB = rangeSum(monthlyData.expensesBudget);
+                const lySales = rangeSum(monthlyData.lastYear), lyProfit = rangeSum(monthlyData.lastYearProfit);
+                const op = profit - exp, opB = profitB - expB;
+
+                const bPct = salesB > 0 ? sales/salesB*100 : 0;
+                const pBPct = profitB > 0 ? profit/profitB*100 : 0;
+                const yoyS = lySales > 0 ? sales/lySales*100 : 0;
+                const yoyP = lyProfit > 0 ? profit/lyProfit*100 : 0;
+                const overall = judge(pBPct, yoyP);
+
+                const mSales = fullArr(monthlyData.actual), mBudget = fullArr(monthlyData.budget);
+                const mProfit = fullArr(monthlyData.actualProfit), mProfitB = fullArr(monthlyData.budgetProfit);
+                const mLY = fullArr(monthlyData.lastYear), mLYP = fullArr(monthlyData.lastYearProfit);
+
+                const divs = ['div1', 'div2', 'div3'].map((dk, i) => {
+                    const dd = divisionMonthlyData[dk] || {};
+                    const s = rangeSum(dd.actual), p = rangeSum(dd.profit);
+                    const sB = rangeSum(dd.budget), pB = rangeSum(dd.budgetProfit);
+                    const bP = pB > 0 ? p/pB*100 : 0;
+                    return { label: `第${i+1}事業部`, sales: s, profit: p, salesB: sB, profitB: pB, margin: s > 0 ? p/s*100 : 0, share: profit > 0 ? p/profit*100 : 0, budgetPct: bP, rating: judge(bP, 100) };
+                });
+
+                const mProjects = (projectList || []).filter(p => { const idx = Utils.getFiscalMonthIndex(p.date); return idx >= from && idx <= to; });
+                const aggregate = (keyFn) => { const m = {}; mProjects.forEach(p => { const k = keyFn(p); if (!m[k.key]) m[k.key] = { name: k.name, sales: 0, profit: 0, count: 0 }; m[k.key].sales += p.sales; m[k.key].profit += p.profit; m[k.key].count++; }); return Object.values(m).sort((a, b) => b.profit - a.profit); };
+                const topClients = aggregate(p => ({ key: p.client || '不明', name: p.client || '不明' })).slice(0, 10);
+                const topWorks = aggregate(p => ({ key: p.managerId || p.title, name: (worksMaster && worksMaster[p.managerId]) || p.title })).slice(0, 10);
+                const jobs = aggregate(p => { const c = Utils.getJobCategory(p.job); return { key: c, name: c }; });
+                const topProjects = [...mProjects].sort((a, b) => b.sales - a.sales).slice(0, 15);
+
+                const metricRatings = [
+                    { name: '売上', bPct: bPct, yPct: yoyS, rating: judge(bPct, yoyS) },
+                    { name: '粗利', bPct: pBPct, yPct: yoyP, rating: judge(pBPct, yoyP) }
+                ];
+
+                return { periodLabel, from, to, labels, isSingle,
+                    sales, salesB, profit, profitB, exp, expB, op, opB, lySales, lyProfit,
+                    bPct, pBPct, yoyS, yoyP, overall, metricRatings,
+                    mSales, mBudget, mProfit, mProfitB, mLY, mLYP,
+                    divs, topClients, topWorks, jobs, topProjects, count: mProjects.length };
+            }, [startMonth, safeEnd, monthlyData, projectList, worksMaster, divisionMonthlyData, judge]);
+
+            const generatePDF = async () => {
+                const el = reportRef.current; if (!el) return;
+                setIsGenerating(true);
+                try {
+                    const { jsPDF } = window.jspdf;
+                    const elRect = el.getBoundingClientRect();
+                    const sectionBreaks = [];
+                    for (let i = 0; i < el.children.length; i++) {
+                        const cr = el.children[i].getBoundingClientRect();
+                        sectionBreaks.push(cr.top - elRect.top);
+                    }
+                    const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff', logging: false });
+                    const scale = canvas.width / el.offsetWidth;
+                    const scaledBreaks = sectionBreaks.map(b => Math.round(b * scale)).filter(b => b > 0);
+
+                    const pdf = new jsPDF('p', 'mm', 'a4');
+                    const pW = pdf.internal.pageSize.getWidth(), pH = pdf.internal.pageSize.getHeight();
+                    const mg = 8, cW = pW - mg*2, cH = pH - mg*2;
+                    const pxPerPage = Math.floor(canvas.width * cH / cW);
+
+                    const pageStarts = [0];
+                    let cursor = 0;
+                    while (cursor + pxPerPage < canvas.height) {
+                        const target = cursor + pxPerPage;
+                        let best = -1;
+                        for (const b of scaledBreaks) {
+                            if (b > cursor && b <= target) best = b;
+                        }
+                        const next = best > cursor ? best : target;
+                        pageStarts.push(next);
+                        cursor = next;
+                    }
+
+                    for (let i = 0; i < pageStarts.length; i++) {
+                        if (i > 0) pdf.addPage();
+                        const srcY = pageStarts[i];
+                        const srcH = (i < pageStarts.length - 1 ? pageStarts[i+1] : canvas.height) - srcY;
+                        if (srcH <= 0) continue;
+                        const pgC = document.createElement('canvas');
+                        pgC.width = canvas.width; pgC.height = srcH;
+                        pgC.getContext('2d').drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
+                        pdf.addImage(pgC.toDataURL('image/jpeg', 0.95), 'JPEG', mg, mg, cW, srcH * cW / canvas.width);
+                    }
+                    pdf.save(`サマリーレポート_${rd.periodLabel.replace('〜', '-')}.pdf`);
+                } catch(e) { console.error('PDF generation error:', e); alert('PDF生成中にエラーが発生しました。'); }
+                setIsGenerating(false);
+            };
+
+            const fY = Utils.formatYen;
+            const pct = (a, b) => b > 0 ? (a/b*100).toFixed(1)+'%' : '-';
+            const gapClr = (a, b, inv) => inv ? (a-b > 0 ? '#ef4444' : '#10b981') : (a-b >= 0 ? '#10b981' : '#ef4444');
+            const achClr = (a, b, inv) => { if (b <= 0) return '#6b7280'; const r = a/b*100; return inv ? (r > 100 ? '#ef4444' : '#10b981') : (r >= 100 ? '#10b981' : r >= 90 ? '#f59e0b' : '#ef4444'); };
+
+            const RS = {
+                h2: { fontSize: '14px', fontWeight: '700', color: '#1e40af', borderLeft: '4px solid #3b82f6', paddingLeft: '8px', margin: '0 0 10px 0' },
+                tbl: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' },
+                thL: { padding: '6px 10px', textAlign: 'left', borderBottom: '2px solid #cbd5e1', fontWeight: '700', fontSize: '11px', backgroundColor: '#f1f5f9', color: '#475569' },
+                th: { padding: '6px 10px', textAlign: 'right', borderBottom: '2px solid #cbd5e1', fontWeight: '700', fontSize: '11px', backgroundColor: '#f1f5f9', color: '#475569' },
+                tdL: { padding: '5px 10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600' },
+                td: { padding: '5px 10px', textAlign: 'right', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontFamily: "'Courier New', monospace" },
+                sec: { marginBottom: '22px' }
+            };
+
+            const ReportTable = ({ headers, rows }) => (
+                <table style={RS.tbl}>
+                    <thead><tr>{headers.map((h, i) => <th key={i} style={i === 0 ? RS.thL : RS.th}>{h}</th>)}</tr></thead>
+                    <tbody>{rows.map((row, ri) => (
+                        <tr key={ri} style={ri % 2 === 1 ? { backgroundColor: '#fafbfc' } : {}}>
+                            {row.map((cell, ci) => <td key={ci} style={ci === 0 ? { ...RS.tdL, ...(cell.style || {}) } : { ...RS.td, ...(cell.style || {}) }}>{cell.v !== undefined ? cell.v : cell}</td>)}
+                        </tr>
+                    ))}</tbody>
+                </table>
+            );
+
+            const RatingBadge = ({ rating, size = 'large' }) => {
+                if (size !== 'large') {
+                    const w = rating.label.length * 7 + 14;
+                    return (<svg width={w} height="18" style={{ display: 'inline-block', verticalAlign: 'middle' }}><rect x="0" y="1" width={w} height="16" rx="4" fill={rating.color}/><text x={w/2} y="12" textAnchor="middle" fontSize="9" fontWeight="800" fill="#fff" fontFamily="Arial, Helvetica, sans-serif">{rating.label}</text></svg>);
+                }
+                return null;
+            };
+
+            const SVGMonthlyChart = ({ actArr, budgetArr, lyArr, labels, from, to, height = 190, title, color = '#3b82f6' }) => {
+                const W = 680, H = height, ML = 60, MR = 15, MT = 30, MB = 32;
+                const cW = W - ML - MR, cH = H - MT - MB;
+                const n = labels.length;
+                const allV = [...actArr, ...budgetArr, ...(lyArr || [])].filter(v => v > 0);
+                const maxV = allV.length > 0 ? Math.max(...allV) * 1.15 : 1;
+                const gap = cW / n, bW = Math.min(gap * 0.55, 36);
+                const yScale = (v) => MT + cH - (v / maxV) * cH;
+                const gridLines = [0, 0.25, 0.5, 0.75, 1];
+                const hasLY = lyArr && lyArr.some(v => v > 0);
+                const fmtAxis = (v) => { if (v >= 1000000000) return (v/1000000000).toFixed(1)+'B'; if (v >= 1000000) return (v/1000000).toFixed(0)+'M'; if (v >= 1000) return (v/1000).toFixed(0)+'K'; return v.toString(); };
+                return (
+                    <svg width={W} height={H} style={{ display: 'block' }}>
+                        <text x={W/2} y={14} textAnchor="middle" fontSize="11" fontWeight="700" fill="#334155">{title}</text>
+                        {gridLines.map((p, i) => { const y = yScale(maxV * p); return (<g key={i}><line x1={ML} y1={y} x2={W-MR} y2={y} stroke="#f1f5f9" strokeWidth="1"/><text x={ML-6} y={y+3} textAnchor="end" fontSize="9" fill="#94a3b8">{fmtAxis(Math.round(maxV*p))}</text></g>); })}
+                        {actArr.map((v, i) => { const x = ML + i * gap + (gap - bW)/2; const bH = Math.max((v / maxV) * cH, 0); const inRange = i >= from && i <= to; return (<rect key={i} x={x} y={yScale(v)} width={bW} height={bH} fill={color} rx="2" opacity={inRange ? 0.9 : 0.25}/>); })}
+                        {budgetArr.length > 1 && <polyline points={budgetArr.map((v, i) => `${ML + i*gap + gap/2},${yScale(v)}`).join(' ')} fill="none" stroke="#1e293b" strokeWidth="2" strokeDasharray="6,3" opacity="0.7"/>}
+                        {hasLY && <polyline points={lyArr.map((v, i) => `${ML + i*gap + gap/2},${yScale(v)}`).join(' ')} fill="none" stroke="#94a3b8" strokeWidth="1.5" opacity="0.6"/>}
+                        {labels.map((l, i) => { const inRange = i >= from && i <= to; return (<text key={i} x={ML + i*gap + gap/2} y={H-8} textAnchor="middle" fontSize="9" fill={inRange ? '#1e293b' : '#cbd5e1'} fontWeight={inRange ? '700' : '400'}>{l}</text>); })}
+                        {from <= to && <rect x={ML + from * gap} y={MT} width={(to - from + 1) * gap} height={cH} fill={color} opacity="0.04" rx="4"/>}
+                        <rect x={ML} y={18} width={8} height={8} fill={color} rx="1" opacity="0.9"/><text x={ML+12} y={25} fontSize="8" fill="#334155">実績</text>
+                        <line x1={ML+50} y1={22} x2={ML+66} y2={22} stroke="#1e293b" strokeWidth="2" strokeDasharray="4,2"/><text x={ML+70} y={25} fontSize="8" fill="#334155">予算</text>
+                        {hasLY && <><line x1={ML+100} y1={22} x2={ML+116} y2={22} stroke="#94a3b8" strokeWidth="1.5"/><text x={ML+120} y={25} fontSize="8" fill="#334155">昨期</text></>}
+                    </svg>
+                );
+            };
+
+            const SVGDonut = ({ data, colors, labelArr, size = 140 }) => {
+                const total = data.reduce((s, v) => s + v, 0);
+                if (total === 0) return <svg width={size+160} height={Math.max(size, labelArr.length*18+10)}><text x={size/2} y={size/2} textAnchor="middle" fontSize="11" fill="#94a3b8">データなし</text></svg>;
+                const cx = size/2, cy = size/2, R = size*0.42, r = size*0.24;
+                let angle = -Math.PI/2;
+                const arcs = data.map((val, i) => {
+                    const a = (val/total)*Math.PI*2;
+                    const sa = angle, ea = angle + a;
+                    const cos = Math.cos, sin = Math.sin;
+                    const lg = a > Math.PI ? 1 : 0;
+                    const d = `M${cx+R*cos(sa)},${cy+R*sin(sa)} A${R},${R} 0 ${lg},1 ${cx+R*cos(ea)},${cy+R*sin(ea)} L${cx+r*cos(ea)},${cy+r*sin(ea)} A${r},${r} 0 ${lg},0 ${cx+r*cos(sa)},${cy+r*sin(sa)} Z`;
+                    angle = ea;
+                    return { d, pct: (val/total*100).toFixed(1) };
+                });
+                return (
+                    <svg width={size+170} height={Math.max(size, labelArr.length*18+10)} style={{ display: 'block' }}>
+                        {arcs.map((arc, i) => <path key={i} d={arc.d} fill={colors[i]}/>)}
+                        {labelArr.map((l, i) => (
+                            <g key={i} transform={`translate(${size+8}, ${i*18+12})`}>
+                                <rect width="10" height="10" fill={colors[i]} rx="2"/><text x="14" y="9" fontSize="10" fill="#334155">{l} ({arcs[i]?.pct}%)</text>
+                            </g>
+                        ))}
+                    </svg>
+                );
+            };
+
+            const SVGHorizontalBars = ({ items, width = 680, barH = 20 }) => {
+                const maxV = items.length > 0 ? Math.max(...items.map(it => Math.abs(it.value)), 1) : 1;
+                const H = items.length * (barH + 6) + 8;
+                const lW = 130, vW = 90, barArea = width - lW - vW - 10;
+                return (
+                    <svg width={width} height={H} style={{ display: 'block' }}>
+                        {items.map((it, i) => {
+                            const y = i * (barH + 6) + 4;
+                            const bW = maxV > 0 ? (it.value / maxV) * barArea : 0;
+                            return (
+                                <g key={i}>
+                                    <text x={lW-6} y={y+barH/2+4} textAnchor="end" fontSize="10" fill="#334155" fontWeight={i<3?'700':'400'}>{it.label.length > 16 ? it.label.substring(0,16)+'…' : it.label}</text>
+                                    <rect x={lW} y={y} width={Math.max(bW, 2)} height={barH} fill={it.color || '#3b82f6'} rx="3" opacity={i<3?0.9:0.65}/>
+                                    <text x={lW+bW+6} y={y+barH/2+4} fontSize="9" fill="#475569" fontFamily="'Courier New', monospace">{fY(it.value)}</text>
+                                </g>
+                            );
+                        })}
+                    </svg>
+                );
+            };
+
+            const GaugeBar = ({ value, max, label, color }) => {
+                const pctVal = max > 0 ? Math.min(value/max*100, 150) : 0;
+                const w = 200, h = 18;
+                return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
+                        <span style={{ fontSize: '10px', color: '#64748b', width: '50px', textAlign: 'right', flexShrink: 0 }}>{label}</span>
+                        <svg width={w} height={h}>
+                            <rect x="0" y="4" width={w} height="10" fill="#f1f5f9" rx="5"/>
+                            <rect x="0" y="4" width={Math.min(pctVal/150*w, w)} height="10" fill={color} rx="5" opacity="0.85"/>
+                            <line x1={100/150*w} y1="2" x2={100/150*w} y2="16" stroke="#1e293b" strokeWidth="1.5" strokeDasharray="2,1"/>
+                        </svg>
+                        <span style={{ fontSize: '10px', fontWeight: '700', color: color, width: '45px', fontFamily: "'Courier New', monospace" }}>{pctVal.toFixed(1)}%</span>
+                    </div>
+                );
+            };
+
+            const divColors = ['#3b82f6', '#10b981', '#f59e0b'];
+            const jobColors = Object.values(C.CAT_COLORS);
+
+            return (
+                <div className="space-y-6 animate-in">
+                    <div className="bg-white p-6 rounded-xl card-shadow flex flex-col md:flex-row justify-between items-center gap-4">
+                        <h2 className="text-xl font-bold flex items-center gap-2"><Icon name="FileText"/> サマリーレポート PDF出力</h2>
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-1.5 bg-blue-50 border-2 border-blue-200 rounded-lg px-3 py-2">
+                                <select className="bg-transparent text-sm font-bold text-blue-700 focus:outline-none cursor-pointer" value={startMonth} onChange={(e) => { const v = Number(e.target.value); setStartMonth(v); if (v > endMonth) setEndMonth(v); }}>
+                                    {(monthlyData.labels || []).map((l, i) => <option key={i} value={i}>{l}</option>)}
+                                </select>
+                                <span className="text-blue-400 font-bold mx-1">〜</span>
+                                <select className="bg-transparent text-sm font-bold text-blue-700 focus:outline-none cursor-pointer" value={safeEnd} onChange={(e) => setEndMonth(Math.max(startMonth, Number(e.target.value)))}>
+                                    {(monthlyData.labels || []).map((l, i) => <option key={i} value={i} disabled={i < startMonth}>{l}</option>)}
+                                </select>
+                            </div>
+                            <button onClick={generatePDF} disabled={isGenerating} className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg font-bold text-sm hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 transition-all shadow-lg shadow-blue-500/30">
+                                {isGenerating ? <span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span> : <Icon name="Download" size={16}/>}
+                                {isGenerating ? 'PDF生成中...' : 'PDF出力'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="bg-gray-200 p-6 rounded-xl overflow-auto flex justify-center">
+                        <div ref={reportRef} style={{ width: '760px', padding: '36px 40px', backgroundColor: '#fff', fontFamily: "'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif", color: '#1e293b', boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }}>
+
+                            <div style={{ borderBottom: '3px solid #1e40af', paddingBottom: '14px', marginBottom: '20px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                                    <div>
+                                        <h1 style={{ fontSize: '22px', fontWeight: '800', color: '#1e40af', margin: '0 0 2px 0' }}>サマリーレポート</h1>
+                                        <span style={{ fontSize: '16px', fontWeight: '700', color: '#334155' }}>30期 {rd.periodLabel}</span>
+                                    </div>
+                                    <span style={{ fontSize: '11px', color: '#94a3b8' }}>出力日: {new Date().toLocaleDateString('ja-JP')}</span>
+                                </div>
+                            </div>
+
+                            <div style={{ ...RS.sec, display: 'flex', gap: '14px', alignItems: 'stretch' }}>
+                                <div style={{ flex: '0 0 220px' }}>
+                                    <svg width="220" height="130" style={{ display: 'block' }}>
+                                        <rect x="0" y="0" width="220" height="130" rx="12" fill={rd.overall.color}/>
+                                        <text x="110" y="26" textAnchor="middle" fontSize="11" fontWeight="600" fill="#fff" opacity="0.9" fontFamily="Arial, Helvetica, sans-serif">OVERALL RATING</text>
+                                        <text x="110" y="62" textAnchor="middle" fontSize="24" fontWeight="800" fill="#fff" fontFamily="Arial, Helvetica, sans-serif">{rd.overall.label}</text>
+                                        <text x="110" y="86" textAnchor="middle" fontSize="16" fill="#fff" opacity="0.9">{'★'.repeat(rd.overall.stars)}{'☆'.repeat(5 - rd.overall.stars)}</text>
+                                        <text x="64" y="114" textAnchor="middle" fontSize="10" fill="#fff" opacity="0.9" fontFamily="Arial, Helvetica, sans-serif">予算比 {rd.pBPct.toFixed(1)}%</text>
+                                        <text x="158" y="114" textAnchor="middle" fontSize="10" fill="#fff" opacity="0.9" fontFamily="Arial, Helvetica, sans-serif">昨対比 {rd.yoyP.toFixed(1)}%</text>
+                                    </svg>
+                                </div>
+                                <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                    {[
+                                        { title: '売上', a: rd.sales, b: rd.salesB, ly: rd.lySales, color: '#3b82f6', bP: rd.bPct, yP: rd.yoyS, r: rd.metricRatings[0].rating },
+                                        { title: '粗利', a: rd.profit, b: rd.profitB, ly: rd.lyProfit, color: '#f97316', bP: rd.pBPct, yP: rd.yoyP, r: rd.metricRatings[1].rating },
+                                        { title: '販管費', a: rd.exp, b: rd.expB, color: '#64748b', inv: true },
+                                        { title: '営業利益', a: rd.op, b: rd.opB, color: '#10b981' }
+                                    ].map((kpi, i) => (
+                                        <div key={i} style={{ backgroundColor: '#f8fafc', borderRadius: '8px', padding: '10px 12px', border: '1px solid #e2e8f0', position: 'relative' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                                                <span style={{ fontSize: '10px', color: '#64748b', fontWeight: '600' }}>{kpi.title}</span>
+                                                {kpi.r && <RatingBadge rating={kpi.r} size="small"/>}
+                                            </div>
+                                            <div style={{ fontSize: '16px', fontWeight: '800', color: kpi.color, fontFamily: "'Courier New', monospace" }}>{fY(kpi.a)}</div>
+                                            <div style={{ fontSize: '9px', color: '#94a3b8', marginTop: '1px' }}>
+                                                <div>予算: {fY(kpi.b)} ({pct(kpi.a, kpi.b)})</div>
+                                                {kpi.ly !== undefined && <div>昨期: {fY(kpi.ly)} ({kpi.yP !== undefined ? kpi.yP.toFixed(1) + '%' : '-'})</div>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div style={RS.sec}>
+                                <h2 style={RS.h2}>月次推移（売上）</h2>
+                                <SVGMonthlyChart actArr={rd.mSales} budgetArr={rd.mBudget} lyArr={rd.mLY} labels={rd.labels} from={rd.from} to={rd.to} title="売上 実績 vs 予算 vs 昨期" color="#3b82f6"/>
+                            </div>
+
+                            <div style={RS.sec}>
+                                <h2 style={RS.h2}>月次推移（粗利）</h2>
+                                <SVGMonthlyChart actArr={rd.mProfit} budgetArr={rd.mProfitB} lyArr={rd.mLYP} labels={rd.labels} from={rd.from} to={rd.to} title="粗利 実績 vs 予算 vs 昨期" color="#f97316"/>
+                            </div>
+
+                            <div style={RS.sec}>
+                                <h2 style={RS.h2}>全社業績サマリー（{rd.periodLabel}）</h2>
+                                <ReportTable
+                                    headers={['項目', '実績', '予算', '予実GAP', '達成率', '昨期実績', '昨対比', '評価']}
+                                    rows={[
+                                        { name: '売上', a: rd.sales, b: rd.salesB, ly: rd.lySales, yoy: rd.yoyS, r: rd.metricRatings[0].rating },
+                                        { name: '粗利', a: rd.profit, b: rd.profitB, ly: rd.lyProfit, yoy: rd.yoyP, r: rd.metricRatings[1].rating },
+                                        { name: '販管費', a: rd.exp, b: rd.expB, inv: true },
+                                        { name: '営業利益', a: rd.op, b: rd.opB }
+                                    ].map(r => [
+                                        r.name,
+                                        { v: fY(r.a), style: { fontWeight: '700' } },
+                                        fY(r.b),
+                                        { v: fY(r.a - r.b), style: { color: gapClr(r.a, r.b, r.inv), fontWeight: '600' } },
+                                        { v: pct(r.a, r.b), style: { color: achClr(r.a, r.b, r.inv), fontWeight: '700' } },
+                                        r.ly !== undefined ? fY(r.ly) : '-',
+                                        r.yoy !== undefined ? { v: r.yoy.toFixed(1)+'%', style: { color: r.yoy >= 100 ? '#10b981' : '#ef4444', fontWeight: '600' } } : '-',
+                                        r.r ? { v: r.r.label, style: { color: r.r.color, fontWeight: '800', fontSize: '10px' } } : '-'
+                                    ])}
+                                />
+                            </div>
+
+                            <div style={RS.sec}>
+                                <h2 style={RS.h2}>事業部別実績（{rd.periodLabel}）</h2>
+                                <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+                                    <div style={{ flex: '0 0 280px' }}>
+                                        <SVGHorizontalBars items={rd.divs.map((d, i) => ({ label: d.label, value: d.profit, color: divColors[i] }))} width={280} barH={24}/>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        {rd.divs.map((d, i) => (
+                                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
+                                                <span style={{ fontSize: '11px', fontWeight: '600', color: divColors[i] }}>{d.label}</span>
+                                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                                    <span style={{ fontSize: '10px', color: '#64748b' }}>粗利率 {d.margin.toFixed(1)}%</span>
+                                                    <span style={{ fontSize: '10px', color: '#64748b' }}>シェア {d.share.toFixed(1)}%</span>
+                                                    <span style={{ fontSize: '10px', color: '#64748b' }}>予算比 {d.budgetPct.toFixed(0)}%</span>
+                                                    <RatingBadge rating={d.rating} size="small"/>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={RS.sec}>
+                                <h2 style={RS.h2}>職種別実績（{rd.count}件）</h2>
+                                <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+                                    <div style={{ flex: '0 0 auto' }}>
+                                        <SVGDonut data={rd.jobs.map(j=>j.profit)} colors={rd.jobs.map(j=>C.CAT_COLORS[j.name]||'#cbd5e1')} labelArr={rd.jobs.map(j=>j.name)} size={130}/>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <ReportTable
+                                            headers={['職種', '案件数', '売上', '粗利', '粗利率']}
+                                            rows={rd.jobs.map(j => [
+                                                j.name, j.count + '件', fY(j.sales),
+                                                { v: fY(j.profit), style: { fontWeight: '700', color: '#1e40af' } },
+                                                (j.sales > 0 ? (j.profit/j.sales*100).toFixed(1) : '0.0') + '%'
+                                            ])}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={RS.sec}>
+                                <h2 style={RS.h2}>クライアント別 粗利 TOP 10</h2>
+                                <SVGHorizontalBars items={rd.topClients.map((c, i) => ({ label: c.name, value: c.profit, color: i < 3 ? '#1e40af' : '#60a5fa' }))} width={680}/>
+                                <div style={{ marginTop: '6px' }}>
+                                    <ReportTable
+                                        headers={['#', 'クライアント', '案件数', '売上', '粗利', '粗利率']}
+                                        rows={rd.topClients.map((c, i) => [
+                                            { v: i+1, style: { fontWeight: '700', color: '#94a3b8', textAlign: 'center' } },
+                                            { v: c.name.length > 18 ? c.name.substring(0,18)+'…' : c.name, style: { textAlign: 'left' } },
+                                            c.count+'件', fY(c.sales),
+                                            { v: fY(c.profit), style: { fontWeight: '700', color: '#1e40af' } },
+                                            (c.sales>0?(c.profit/c.sales*100).toFixed(1):'0.0')+'%'
+                                        ])}
+                                    />
+                                </div>
+                            </div>
+
+                            <div style={RS.sec}>
+                                <h2 style={RS.h2}>作品別 粗利 TOP 10</h2>
+                                <SVGHorizontalBars items={rd.topWorks.map((w, i) => ({ label: w.name, value: w.profit, color: i < 3 ? '#7c3aed' : '#a78bfa' }))} width={680}/>
+                                <div style={{ marginTop: '6px' }}>
+                                    <ReportTable
+                                        headers={['#', '作品名', '案件数', '売上', '粗利', '粗利率']}
+                                        rows={rd.topWorks.map((w, i) => [
+                                            { v: i+1, style: { fontWeight: '700', color: '#94a3b8', textAlign: 'center' } },
+                                            { v: w.name.length > 18 ? w.name.substring(0,18)+'…' : w.name, style: { textAlign: 'left' } },
+                                            w.count+'件', fY(w.sales),
+                                            { v: fY(w.profit), style: { fontWeight: '700', color: '#1e40af' } },
+                                            (w.sales>0?(w.profit/w.sales*100).toFixed(1):'0.0')+'%'
+                                        ])}
+                                    />
+                                </div>
+                            </div>
+
+                            <div style={{ marginTop: '20px', paddingTop: '10px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '9px', color: '#94a3b8' }}>Gaie Dashboard - Confidential</span>
+                                <span style={{ fontSize: '8px', color: '#cbd5e1' }}>EXCELLENT: 予算比110%以上+昨対105%以上 / GOOD: 予算比100%以上+昨対100%以上 / AVERAGE: 予算比90%以上or昨対95%以上 / NOT GOOD: その他</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const navItems = [{ id: 'dashboard', label: '全社', icon: 'Dashboard' }, { id: 'division', label: '事業部', icon: 'Layout' }, { id: 'clients', label: '顧客', icon: 'Users' }, { id: 'works', label: '作品', icon: 'Film' }, { id: 'jobs', label: '職種', icon: 'BarChart' }, { id: 'expenses', label: '販管費', icon: 'CreditCard' }, { id: 'projects', label: '案件管理', icon: 'Briefcase' }, { id: 'history', label: '過去実績', icon: 'History' }, { id: 'report', label: '出力', icon: 'FileText' }];
 
         const MONTH_LABELS = ['3月','4月','5月','6月','7月','8月','9月','10月','11月','12月','1月','2月'];
 
@@ -1370,11 +1889,31 @@
             const identifyAndProcess = (rows, type) => {
                 if (!rows || rows.length === 0) return;
                 try {
+                    if (type === 'detect') {
+                        const flat = (rows.slice(0, 5).map(r => (r && Array.isArray(r) ? r : []).join(' '))).join(' ');
+                        if (flat.includes('売上予算') || (flat.includes('予算') && flat.includes('全社'))) { identifyAndProcess(rows, 'budget'); return; }
+                        if (flat.includes('売上') && (flat.includes('請求日') || flat.includes('計上日'))) { identifyAndProcess(rows, 'actual'); return; }
+                        if (flat.includes('販管費') && flat.includes('実績')) { identifyAndProcess(rows, 'expenses'); return; }
+                        if (flat.includes('粗利') && flat.includes('請求日')) { identifyAndProcess(rows, 'last_year'); return; }
+                        if (flat.includes('管理番号') && flat.includes('作品名')) { identifyAndProcess(rows, 'works'); return; }
+                        return;
+                    }
                     let d;
                     switch (type) {
                         case 'budget':
+                            console.log('[identifyAndProcess] Processing budget, rows count:', rows?.length);
                             d = DataProcessor.processBudget(rows);
-                            if(d) { setMonthlyData(p=>({...p, ...d.main})); setDivisionMonthlyData(prev => ({ div1: {...prev.div1, ...d.div1}, div2: {...prev.div2, ...d.div2}, div3: {...prev.div3, ...d.div3} })); }
+                            if(d) {
+                                console.log('[identifyAndProcess] Budget processed successfully:', d.main);
+                                setMonthlyData(p=>{
+                                    const newData = {...p, ...d.main};
+                                    console.log('[identifyAndProcess] monthlyData updated - budget:', newData.budget, 'budgetProfit:', newData.budgetProfit);
+                                    return newData;
+                                });
+                                setDivisionMonthlyData(prev => ({ div1: {...prev.div1, ...d.div1}, div2: {...prev.div2, ...d.div2}, div3: {...prev.div3, ...d.div3} }));
+                            } else {
+                                console.log('[identifyAndProcess] Budget processing returned null');
+                            }
                             break;
                         case 'actual':
                             d = DataProcessor.processBoardSales(rows);
@@ -1422,13 +1961,20 @@
                 setIsLoading(true); setLoadingStatus('データ取得中...');
                 const fetchType = async (type) => {
                     try {
+                        console.log(`[fetchType] Fetching type: ${type}`);
                         const res = await fetch(`${targetUrl}${targetUrl.includes('?')?'&':'?'}type=${type}`);
                         const text = await res.text();
                         try {
                             const json = JSON.parse(text);
-                            if(json.data) { identifyAndProcess(json.data, type); }
-                        } catch (parseErr) { console.error(parseErr); }
-                    } catch(e) { console.error(e); }
+                            if(json.data) {
+                                console.log(`[fetchType] ${type} - received ${json.data.length} rows`);
+                                if (type === 'budget') console.log(`[fetchType] budget first 3 rows:`, json.data.slice(0, 3));
+                                identifyAndProcess(json.data, type);
+                            } else {
+                                console.log(`[fetchType] ${type} - no data in response`);
+                            }
+                        } catch (parseErr) { console.error(`[fetchType] ${type} - parse error:`, parseErr); }
+                    } catch(e) { console.error(`[fetchType] ${type} - fetch error:`, e); }
                 };
                 await Promise.all(['actual', 'budget', 'expenses', 'expense_details', 'last_year', 'works'].map(fetchType));
                 const historyPeriods = [23, 24, 25, 26, 27, 28];
@@ -1443,7 +1989,7 @@
 
             return (
                 <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-gray-800">
-                    <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm h-14"><div className="max-w-7xl mx-auto w-full h-full px-4 sm:px-8 flex items-center justify-between"><div className="flex items-center gap-3 flex-shrink-0 mr-4"><div className="bg-blue-600 text-white p-1.5 rounded-lg shadow-sm"><Icon name="Activity" size={18} /></div><h1 className="text-base font-bold text-gray-800 tracking-tight hidden sm:block">Gaie Dashboard v18.6</h1></div><nav className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar h-full py-2">{navItems.map(item => (<button key={item.id} onClick={() => setActiveTab(item.id)} className={`${CLS.NAV_BTN} ${activeTab===item.id?CLS.NAV_BTN_ACTIVE:CLS.NAV_BTN_INACTIVE}`}><Icon name={item.icon} size={14} />{item.label}</button>))}</nav><div className="flex items-center gap-3 flex-shrink-0 ml-4 border-l border-gray-100 pl-4 h-8"><button onClick={()=>setShowSettings(true)} className="flex items-center gap-1.5 text-xs font-bold text-gray-600 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-gray-200"><Icon name="Settings" size={14} />連携</button></div></div></header>
+                    <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm h-14"><div className="max-w-7xl mx-auto w-full h-full px-4 sm:px-8 flex items-center justify-between"><div className="flex items-center gap-3 flex-shrink-0 mr-4"><div className="bg-blue-600 text-white p-1.5 rounded-lg shadow-sm"><Icon name="Activity" size={18} /></div><h1 className="text-base font-bold text-gray-800 tracking-tight hidden sm:block">Gaie Sales Dashboard</h1></div><nav className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar h-full py-2">{navItems.map(item => (<button key={item.id} onClick={() => setActiveTab(item.id)} className={`${CLS.NAV_BTN} ${activeTab===item.id?CLS.NAV_BTN_ACTIVE:CLS.NAV_BTN_INACTIVE}`}><Icon name={item.icon} size={14} />{item.label}</button>))}</nav><div className="flex items-center gap-3 flex-shrink-0 ml-4 border-l border-gray-100 pl-4 h-8"><button onClick={()=>setShowSettings(true)} className="flex items-center gap-1.5 text-xs font-bold text-gray-600 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-gray-200"><Icon name="Settings" size={14} />連携</button></div></div></header>
                     <main className="flex-1 overflow-y-auto p-4 max-w-7xl mx-auto w-full">
                          {isLoading && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-sm"><div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center max-w-sm w-full relative overflow-hidden"><div className="mb-6 relative flex items-center justify-center h-20 w-20"><div className="absolute inset-0 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div><div className="relative bg-white p-4 rounded-full shadow-sm text-blue-600"><Icon name="TrendingUp" size={32} /></div></div><h3 className="text-lg font-bold text-gray-800 mb-2">データを同期中</h3><p className="text-xs text-gray-500 mb-1">{loadingStatus}</p></div></div>}
                          <ErrorBoundary>
@@ -1455,6 +2001,7 @@
                              {activeTab === 'jobs' && <JobAnalysisPage projectList={projectList} monthlyData={monthlyData} />}
                              {activeTab === 'division' && <UnifiedDivisionPage divisionMonthlyData={divisionMonthlyData} monthlyData={monthlyData} projectList={projectList} worksMaster={worksMaster} displayMode={displayMode} setDisplayMode={setDisplayMode} divisionOpMode={divisionOpMode} setDivisionOpMode={setDivisionOpMode} divisionMonthlyViewMode={divisionMonthlyViewMode} setDivisionMonthlyViewMode={setDivisionMonthlyViewMode} divisionOpViewMode={divisionOpViewMode} setDivisionOpViewMode={setDivisionOpViewMode} divisionExpenseViewMode={divisionExpenseViewMode} setDivisionExpenseViewMode={setDivisionExpenseViewMode} calculateRankedProjects={calculateRankedProjects} calculateRankedClients={calculateRankedClients} />}
                              {activeTab === 'projects' && <ProjectsPage projectList={projectList} monthlyData={monthlyData} worksMaster={worksMaster} />}
+                             {activeTab === 'report' && <SummaryReportPage monthlyData={monthlyData} projectList={projectList} worksMaster={worksMaster} divisionMonthlyData={divisionMonthlyData} />}
                          </ErrorBoundary>
                     </main>
                     {showSettings && <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay"><div className="bg-white p-8 rounded-xl shadow-xl w-full max-w-lg"><h3 className="text-xl font-bold mb-4 flex items-center gap-2"><Icon name="Settings"/> 設定</h3><input type="text" className="w-full border p-3 rounded mb-4" placeholder="API URL" value={apiUrl} onChange={(e)=>setApiUrl(e.target.value)} /><div className="flex justify-end gap-3"><button onClick={()=>setShowSettings(false)} className="px-4 py-2 text-gray-500">キャンセル</button><button onClick={saveSettings} className="px-4 py-2 bg-blue-600 text-white rounded">保存</button></div></div></div>}
