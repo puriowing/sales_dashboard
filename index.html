@@ -1459,7 +1459,7 @@
                         <StatCard title="累計販管費" value={Utils.formatYen(totalExpAct)} budget={Utils.formatYen(totalExpBud)} achievement={totalExpBud>0?totalExpAct/totalExpBud*100:0} subValue={<span>GAP: {Utils.formatYen(totalExpAct-totalExpBud)}</span>} trend={totalExpAct<=totalExpBud?'up':'down'} isExpense={true} />
                         <StatCard title="累計営業利益" value={Utils.formatYen(totalOpAct)} budget={Utils.formatYen(totalOpBud)} achievement={totalOpBud!==0?totalOpAct/totalOpBud*100:0} subValue={<span>GAP: {Utils.formatYen(totalOpAct-totalOpBud)}</span>} trend={totalOpAct>=totalOpBud?'up':'down'} />
                     </div>
-                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">月次 予実推移 (vs 昨期)</h2><div className="flex gap-2"><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={monthlyViewMode} onChange={setMonthlyViewMode} /></div></div>{monthlyViewMode === 'chart' ? <div className="h-80 w-full"><ChartComponent type="bar" data={chartData} options={{ scales: { y: { ticks: { callback: (val) => Utils.formatYen(val) } } } }} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const budget = (displayMode === 'sales' ? (monthlyData.budget || [])[i] : (monthlyData.budgetProfit || [])[i]) || 0; const actual = (displayMode === 'sales' ? (monthlyData.actual || [])[i] : (monthlyData.actualProfit || [])[i]) || 0; const lastYear = (displayMode === 'sales' ? (monthlyData.lastYear || [])[i] : (monthlyData.lastYearProfit || [])[i]) || 0; const gap = actual - budget; const lastYearGap = actual - lastYear; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-500">{Utils.formatYen(lastYear * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${lastYearGap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(lastYearGap * 1000)}</td></tr>; })}</tbody></table></div>}</div>
+                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">月次 予実推移 (vs 昨期)</h2><div className="flex gap-2"><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={monthlyViewMode} onChange={setMonthlyViewMode} /></div></div>{monthlyViewMode === 'chart' ? <div className="h-80 w-full"><ChartComponent type="bar" data={chartData} options={{ scales: { y: { ticks: { callback: (val) => Utils.formatYen(val) } } } }} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期GAP</th></tr></thead><tbody>{(() => { const labels = monthlyData.labels || []; const getB = (i) => (displayMode === 'sales' ? (monthlyData.budget || [])[i] : (monthlyData.budgetProfit || [])[i]) || 0; const getA = (i) => (displayMode === 'sales' ? (monthlyData.actual || [])[i] : (monthlyData.actualProfit || [])[i]) || 0; const getL = (i) => (displayMode === 'sales' ? (monthlyData.lastYear || [])[i] : (monthlyData.lastYearProfit || [])[i]) || 0; const qNames = ['第1四半期 (3-5月)', '第2四半期 (6-8月)', '第3四半期 (9-11月)', '第4四半期 (12-2月)']; const rows = []; let qB = 0, qA = 0, qL = 0; labels.forEach((label, i) => { const budget = getB(i), actual = getA(i), lastYear = getL(i); const gap = actual - budget, lastYearGap = actual - lastYear; qB += budget; qA += actual; qL += lastYear; rows.push(<tr key={'m' + i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-500">{Utils.formatYen(lastYear * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${lastYearGap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(lastYearGap * 1000)}</td></tr>); if (i % 3 === 2) { const qi = Math.floor(i / 3); const qgap = qA - qB, qlygap = qA - qL; rows.push(<tr key={'q' + qi} className="bg-blue-50 border-b-2 border-blue-200"><td className="px-4 py-3 text-blue-800 font-bold">{qNames[qi]}</td><td className="px-4 py-3 text-right text-blue-800 font-bold">{Utils.formatYen(qB * 1000)}</td><td className="px-4 py-3 text-right text-blue-900 font-extrabold">{Utils.formatYen(qA * 1000)}</td><td className={`px-4 py-3 text-right font-bold ${qgap >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Utils.formatYen(qgap * 1000)}</td><td className="px-4 py-3 text-right text-blue-700 font-bold">{Utils.formatYen(qL * 1000)}</td><td className={`px-4 py-3 text-right font-bold ${qlygap >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Utils.formatYen(qlygap * 1000)}</td></tr>); qB = 0; qA = 0; qL = 0; } }); return rows; })()}</tbody></table></div>}</div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'monthly', label:'月次'}, {value:'cumulative', label:'累計'}]} value={opMode} onChange={setOpMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={opViewMode} onChange={setOpViewMode} /></div></div>{opViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', monthlyData.operatingProfit, monthlyData.operatingProfitBudget, opMode==='cumulative', monthlyData.labels)} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const actualData = opMode === 'cumulative' ? Utils.calculateCumulative(monthlyData.operatingProfit || []) : (monthlyData.operatingProfit || []); const budgetData = opMode === 'cumulative' ? Utils.calculateCumulative(monthlyData.operatingProfitBudget || []) : (monthlyData.operatingProfitBudget || []); const budget = (budgetData[i] || 0) * 1000; const actual = (actualData[i] || 0) * 1000; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap)}</td></tr>; })}</tbody></table></div>}</div><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">販管費 推移</h2><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={expenseViewMode} onChange={setExpenseViewMode} /></div>{expenseViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', monthlyData.expenses, monthlyData.expensesBudget, false, monthlyData.labels)} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const budget = ((monthlyData.expensesBudget || [])[i] || 0) * 1000; const actual = ((monthlyData.expenses || [])[i] || 0) * 1000; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap <= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap)}</td></tr>; })}</tbody></table></div>}</div></div>
                     <DashboardDivisionAnalysis monthlyData={monthlyData} divisionMonthlyData={divisionMonthlyData} divisionData={divisionData} />
                     <RankedProjectsSection projects={rankedProjects} title="作品別 粗利ランキング (Top 15)" />
@@ -1499,7 +1499,7 @@
                          <div className="bg-white p-5 rounded-xl card-shadow flex justify-between items-center"><div><h3 className="text-xs font-medium text-gray-500 mb-1">粗利率</h3><div className="text-2xl font-bold text-gray-800 mb-1">{(totalSalesAct>0?totalProfitAct/totalSalesAct*100:0).toFixed(1)}%</div></div><div className="text-gray-300"><Icon name="Activity" size={40} /></div></div>
                          <div className="bg-white p-5 rounded-xl card-shadow flex justify-between items-center"><div><h3 className="text-xs font-medium text-gray-500 mb-1">稼働作品数</h3><div className="text-2xl font-bold text-gray-800 mb-1">{activeWorksCount}<span className="text-sm font-medium text-gray-500 ml-1">作品</span></div><p className="text-xs text-gray-400">粗利100万円以上</p></div><div className="text-gray-300"><Icon name="Film" size={40} /></div></div>
                     </div>
-                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">{divLabel} 予実推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={viewMode} onChange={setViewMode} /></div></div>{viewMode === 'chart' ? <div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: monthlyData.labels || [], datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?(divData.actual||[]):(divData.profit||[])).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 2, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?(divData.actual||[]):(divData.profit||[])).map((v,i)=>{ const bud = displayMode==='sales'?(divData.budget||[])[i]:(divData.budgetProfit||[])[i]; return v*1000-(bud||0)*1000; }), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 3, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?(divData.budget||[]):(divData.budgetProfit||[])).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5,5], fill: false, order: 4, pointRadius: 3, pointHoverRadius: 5 }] }} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const budget = (displayMode === 'sales' ? (divData.budget || [])[i] : (divData.budgetProfit || [])[i]) || 0; const actual = (displayMode === 'sales' ? (divData.actual || [])[i] : (divData.profit || [])[i]) || 0; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-500">ー</td><td className="px-4 py-3 border-b text-right text-gray-500">ー</td></tr>; })}</tbody></table></div>}</div>
+                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">{divLabel} 予実推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={viewMode} onChange={setViewMode} /></div></div>{viewMode === 'chart' ? <div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: monthlyData.labels || [], datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?(divData.actual||[]):(divData.profit||[])).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 2, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?(divData.actual||[]):(divData.profit||[])).map((v,i)=>{ const bud = displayMode==='sales'?(divData.budget||[])[i]:(divData.budgetProfit||[])[i]; return v*1000-(bud||0)*1000; }), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 3, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?(divData.budget||[]):(divData.budgetProfit||[])).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5,5], fill: false, order: 4, pointRadius: 3, pointHoverRadius: 5 }] }} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期GAP</th></tr></thead><tbody>{(() => { const labels = monthlyData.labels || []; const getB = (i) => (displayMode === 'sales' ? (divData.budget || [])[i] : (divData.budgetProfit || [])[i]) || 0; const getA = (i) => (displayMode === 'sales' ? (divData.actual || [])[i] : (divData.profit || [])[i]) || 0; const qNames = ['第1四半期 (3-5月)', '第2四半期 (6-8月)', '第3四半期 (9-11月)', '第4四半期 (12-2月)']; const rows = []; let qB = 0, qA = 0; labels.forEach((label, i) => { const budget = getB(i), actual = getA(i); const gap = actual - budget; qB += budget; qA += actual; rows.push(<tr key={'m' + i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-500">ー</td><td className="px-4 py-3 border-b text-right text-gray-500">ー</td></tr>); if (i % 3 === 2) { const qi = Math.floor(i / 3); const qgap = qA - qB; rows.push(<tr key={'q' + qi} className="bg-blue-50 border-b-2 border-blue-200"><td className="px-4 py-3 text-blue-800 font-bold">{qNames[qi]}</td><td className="px-4 py-3 text-right text-blue-800 font-bold">{Utils.formatYen(qB * 1000)}</td><td className="px-4 py-3 text-right text-blue-900 font-extrabold">{Utils.formatYen(qA * 1000)}</td><td className={`px-4 py-3 text-right font-bold ${qgap >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Utils.formatYen(qgap * 1000)}</td><td className="px-4 py-3 text-right text-blue-700 font-bold">ー</td><td className="px-4 py-3 text-right text-blue-700 font-bold">ー</td></tr>); qB = 0; qA = 0; } }); return rows; })()}</tbody></table></div>}</div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'monthly', label:'月次'}, {value:'cumulative', label:'累計'}]} value={opMode} onChange={setOpMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={opViewMode} onChange={setOpViewMode} /></div></div>{opViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', divData.op, divData.opBudget, opMode==='cumulative', monthlyData.labels)} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const actualData = opMode === 'cumulative' ? Utils.calculateCumulative(divData.op || []) : (divData.op || []); const budgetData = opMode === 'cumulative' ? Utils.calculateCumulative(divData.opBudget || []) : (divData.opBudget || []); const budget = (budgetData[i] || 0) * 1000; const actual = (actualData[i] || 0) * 1000; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap)}</td></tr>; })}</tbody></table></div>}</div><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">販管費 推移</h2><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={expenseViewMode} onChange={setExpenseViewMode} /></div>{expenseViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', divData.expenses, divData.expensesBudget, false, monthlyData.labels)} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const budget = ((divData.expensesBudget || [])[i] || 0) * 1000; const actual = ((divData.expenses || [])[i] || 0) * 1000; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap <= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap)}</td></tr>; })}</tbody></table></div>}</div></div>
                     <RankedProjectsSection projects={rankedProjects} title={`${divLabel} 作品別粗利ランキング（100万円以上）`} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><RankedClientsSection clients={rankedClients} /><ProfitShareSection projects={filteredProjects} title={`${divLabel} 職種別 構成`} /></div>
@@ -1947,7 +1947,290 @@
             );
         }
 
-        const navItems = [{ id: 'dashboard', label: '全社', icon: 'Dashboard' }, { id: 'division', label: '事業部', icon: 'Layout' }, { id: 'clients', label: '顧客', icon: 'Users' }, { id: 'works', label: '作品', icon: 'Film' }, { id: 'jobs', label: '職種', icon: 'BarChart' }, { id: 'expenses', label: '販管費', icon: 'CreditCard' }, { id: 'projects', label: '案件管理', icon: 'Briefcase' }, { id: 'history', label: '過去実績', icon: 'History' }, { id: 'report', label: '出力', icon: 'FileText' }];
+        // ===== 週次サマリー（金曜朝の役員会議向け売上報告） =====
+        function WeeklySummaryPage({ projectList, worksMaster, releaseSchedule, currentPeriod }) {
+            const [weekOffset, setWeekOffset] = useState(0); // 0 = 直近の完了週（金〜木）
+            const dateMode = 'regDate'; // 集計は登録日（新規登録ベース）に固定
+            const [filterDiv, setFilterDiv] = useState('all'); // all/第1/第2/第3
+            const [upDivFilter, setUpDivFilter] = useState('all'); // 公開予定作品の担当事業部フィルタ（配給ベース）
+            const [trendDiv, setTrendDiv] = useState('all'); // 週次推移テーブルの事業部フィルタ
+            const [trendWeeks, setTrendWeeks] = useState(12); // 週次推移テーブルの表示週数
+            const TOPIC_THRESHOLD = 1000000; // 1案件あたりの「大きな数字」しきい値（売上）
+
+            const fmtMD = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+            const fmtYMD = (d) => `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+            const WD = ['日', '月', '火', '水', '木', '金', '土'];
+
+            // 金曜〜木曜を1週間とする。offset=0 は「直近で完了した週」（＝金曜朝に報告する対象週）
+            const getWeekWindow = (offset) => {
+                const now = new Date();
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const daysSinceThu = (today.getDay() - 4 + 7) % 7; // 直近の木曜までの日数
+                const end = new Date(today); end.setDate(today.getDate() - daysSinceThu + offset * 7); // 木曜
+                const start = new Date(end); start.setDate(end.getDate() - 6); // 前の金曜
+                return { start, end };
+            };
+
+            const divKey = (p) => { const s = String((p && p.div) || ''); if (s.includes('1')) return '第1'; if (s.includes('2')) return '第2'; if (s.includes('3')) return '第3'; return 'その他'; };
+            // 配給会社から担当事業部を判定（第1=東宝 / 第2=東宝東和・東和ピクチャーズ / 第3=それ以外）
+            const distDiv = (dist) => { const d = String(dist || ''); if (d.includes('東宝東和') || d.includes('東和ピクチャーズ')) return '第2'; if (d.includes('東宝')) return '第1'; return '第3'; };
+            const divBadgeCls = (dv) => ({ '第1': 'bg-blue-100 text-blue-700', '第2': 'bg-emerald-100 text-emerald-700', '第3': 'bg-amber-100 text-amber-700' }[dv] || 'bg-gray-100 text-gray-600');
+            const aggregate = (list) => { const sales = list.reduce((s, p) => s + (p.sales || 0), 0); const profit = list.reduce((s, p) => s + (p.profit || 0), 0); return { sales, profit, count: list.length, margin: sales > 0 ? profit / sales * 100 : 0 }; };
+
+            const { window, companyCur, companyPrev, divStats, filteredProjects, topics } = useMemo(() => {
+                const w = getWeekWindow(weekOffset), pw = getWeekWindow(weekOffset - 1);
+                const inRange = (p, win) => {
+                    const raw = String(p[dateMode] || '').trim().substring(0, 10);
+                    const d = Utils.parseDate(raw);
+                    if (d.getFullYear() < 2000) return false;
+                    const t = d.getTime();
+                    return t >= win.start.getTime() && t <= win.end.getTime();
+                };
+                const all = projectList || [];
+                const cur = all.filter(p => inRange(p, w)), prv = all.filter(p => inRange(p, pw));
+                const divs = ['第1', '第2', '第3'];
+                const ds = divs.map(dv => ({ div: dv, cur: aggregate(cur.filter(p => divKey(p) === dv)), prev: aggregate(prv.filter(p => divKey(p) === dv)) }));
+                const visible = filterDiv === 'all' ? cur : cur.filter(p => divKey(p) === filterDiv);
+                const sortedVisible = [...visible].sort((a, b) => b.sales - a.sales);
+                let tp = sortedVisible.filter(p => p.sales >= TOPIC_THRESHOLD);
+                if (tp.length < 3) tp = sortedVisible.slice(0, Math.min(3, sortedVisible.length));
+                return { window: w, companyCur: aggregate(cur), companyPrev: aggregate(prv), divStats: ds, filteredProjects: sortedVisible, topics: tp };
+            }, [projectList, weekOffset, dateMode, filterDiv]);
+
+            // 週次の売上・粗利推移（新規登録ベース・直近 trendWeeks 週）
+            const weeklyTrend = useMemo(() => {
+                const all = projectList || [];
+                const rows = [];
+                for (let off = 0; off > -trendWeeks; off--) {
+                    const w = getWeekWindow(off);
+                    let list = all.filter(p => {
+                        const d = Utils.parseDate(String(p.regDate || '').trim().substring(0, 10));
+                        if (d.getFullYear() < 2000) return false;
+                        const t = d.getTime();
+                        return t >= w.start.getTime() && t <= w.end.getTime();
+                    });
+                    if (trendDiv !== 'all') list = list.filter(p => divKey(p) === trendDiv);
+                    rows.push({ offset: off, start: w.start, end: w.end, ...aggregate(list) });
+                }
+                rows.forEach((r, i) => { const older = rows[i + 1]; r.prevSales = older ? older.sales : null; r.prevProfit = older ? older.profit : null; });
+                return rows;
+            }, [projectList, trendWeeks, trendDiv]);
+
+            // 公開予定作品 × 営業状況（作品ページの「公開作品スケジュール」と連動）
+            const upcoming = useMemo(() => {
+                const now = new Date(); const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const dealsByWork = {};
+                (projectList || []).forEach(p => { const k = String(p.managerId || '').trim(); if (!k) return; (dealsByWork[k] = dealsByWork[k] || []).push(p); });
+                return (releaseSchedule || []).map(wk => {
+                    const rel = Utils.parseDate(wk.releaseDate);
+                    const daysUntil = Math.ceil((rel.getTime() - today.getTime()) / 86400000);
+                    const deals = dealsByWork[String(wk.id || '').trim()] || [];
+                    const dealSales = deals.reduce((s, p) => s + (p.sales || 0), 0);
+                    const dealProfit = deals.reduce((s, p) => s + (p.profit || 0), 0);
+                    const divsSet = [...new Set(deals.map(divKey))].filter(x => x !== 'その他');
+                    let latest = null; deals.forEach(p => { const d = Utils.parseDate(String(p.date || p.regDate || '').substring(0, 10)); if (d.getFullYear() > 2000 && (!latest || d > latest)) latest = d; });
+                    return { ...wk, releaseDiv: distDiv(wk.distributor), daysUntil, dealCount: deals.length, dealSales, dealProfit, divs: divsSet, latestDeal: latest, status: deals.length > 0 ? 'active' : 'untapped' };
+                }).filter(wk => wk.daysUntil >= 0).sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+            }, [releaseSchedule, projectList]);
+
+            const visibleUpcoming = upDivFilter === 'all' ? upcoming : upcoming.filter(w => w.releaseDiv === upDivFilter);
+            const oppSummary = { total: visibleUpcoming.length, untapped: visibleUpcoming.filter(i => i.status === 'untapped').length };
+            const isReg = dateMode === 'regDate';
+            const dateLabel = isReg ? '登録日（新規登録ベース）' : '請求日（売上計上ベース）';
+            const noun = isReg ? '新規登録案件' : '案件';
+
+            const DeltaBadge = ({ cur, prev }) => {
+                const diff = cur - prev, up = diff >= 0;
+                const pct = prev > 0 ? Math.abs(diff / prev * 100) : (cur > 0 ? 100 : 0);
+                return <span className={`text-xs font-bold ${up ? 'text-green-600' : 'text-red-500'}`}>{up ? '▲' : '▼'} {Utils.formatYen(Math.abs(diff))} <span className="font-normal text-gray-400">{prev > 0 ? `(${up ? '+' : '-'}${pct.toFixed(0)}%)` : '(前週0)'}</span></span>;
+            };
+
+            const projCols = useMemo(() => [
+                { key: dateMode, label: dateMode === 'date' ? '請求日' : '登録日', width: 'w-[10%]', sortable: true, render: (p) => { const v = String(p[dateMode] || '').substring(0, 10); return v || '-'; }, className: 'text-gray-500 font-mono' },
+                { key: 'managerId', label: '作品名', width: 'w-[18%]', sortable: true, render: (p) => (worksMaster && worksMaster[p.managerId]) || '-', className: 'font-medium text-indigo-900' },
+                { key: 'title', label: '案件名', width: 'w-[22%]', sortable: true, className: 'text-gray-700' },
+                { key: 'client', label: 'クライアント', width: 'w-[16%]', sortable: true, className: 'text-gray-500' },
+                { key: 'divLabel', label: '事業部', width: 'w-[8%]', sortable: true, render: (p) => divKey(p), className: 'text-gray-500' },
+                { key: 'sales', label: '売上', align: 'right', width: 'w-[13%]', sortable: true, render: (p) => Utils.formatYen(p.sales), className: 'text-gray-600 font-mono' },
+                { key: 'profit', label: '粗利', align: 'right', width: 'w-[13%]', sortable: true, render: (p) => Utils.formatYen(p.profit), className: 'font-bold text-indigo-600 font-mono' }
+            ], [dateMode, worksMaster]);
+
+            const catColor = (c) => ({ '邦画メジャー': 'bg-red-100 text-red-700', '洋画メジャー': 'bg-amber-100 text-amber-700', '邦画独立系': 'bg-purple-100 text-purple-700', '洋画独立系': 'bg-teal-100 text-teal-700' }[c] || 'bg-gray-100 text-gray-600');
+            const upCols = useMemo(() => [
+                { key: 'releaseDate', label: '公開日', width: 'w-[12%]', sortable: true, render: (w) => <div><div className="font-mono text-gray-700">{w.releaseDate}</div><div className="text-[10px] text-gray-400">{w.daysUntil === 0 ? '本日' : `あと${w.daysUntil}日`}</div></div> },
+                { key: 'name', label: '作品名', width: 'w-[22%]', sortable: true, className: 'font-bold text-gray-800' },
+                { key: 'category', label: '区分', width: 'w-[12%]', render: (w) => w.category ? <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${catColor(w.category)}`}>{w.category}</span> : '-' },
+                { key: 'distributor', label: '配給', width: 'w-[14%]', sortable: true, render: (w) => <div className="flex items-center gap-1.5"><span className={`text-[9px] px-1 py-0.5 rounded font-bold shrink-0 ${divBadgeCls(w.releaseDiv)}`}>{w.releaseDiv}</span><span className="truncate">{w.distributor || '—'}</span></div>, className: 'text-gray-500' },
+                { key: 'status', label: '営業状況', width: 'w-[12%]', sortable: true, render: (w) => w.status === 'active' ? <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-bold bg-green-100 text-green-700">受注済 {w.dealCount}件</span> : <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-bold bg-rose-100 text-rose-600">未着手</span> },
+                { key: 'dealSales', label: '受注売上', align: 'right', width: 'w-[12%]', sortable: true, render: (w) => w.dealCount ? Utils.formatYen(w.dealSales) : '-', className: 'font-mono text-gray-600' },
+                { key: 'dealProfit', label: '受注粗利', align: 'right', width: 'w-[10%]', sortable: true, render: (w) => w.dealCount ? Utils.formatYen(w.dealProfit) : '-', className: 'font-mono font-bold text-blue-600' },
+                { key: 'divs', label: '担当', width: 'w-[8%]', render: (w) => w.divs.length ? w.divs.join('・') : '-', className: 'text-gray-500 text-xs' }
+            ], []);
+
+            const divCardColor = { '第1': { bar: 'bg-blue-500', text: 'text-blue-600', bg: 'bg-blue-50' }, '第2': { bar: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50' }, '第3': { bar: 'bg-amber-500', text: 'text-amber-600', bg: 'bg-amber-50' } };
+
+            return (
+                <div className="space-y-6 animate-in">
+                    {/* ヘッダー・週ナビゲーション */}
+                    <div className="bg-white p-6 rounded-xl card-shadow">
+                        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                            <div>
+                                <h2 className="text-xl font-bold flex items-center gap-2"><Icon name="Calendar" className="text-blue-600" /> 週次サマリー</h2>
+                                <p className="text-xs text-gray-500 mt-1">金曜朝の売上報告用 ／ <span className="font-semibold">金曜〜木曜</span>に{isReg ? '新たに登録された案件（前週からの追加分）' : '売り上げた案件'}を集計（{dateLabel}）</p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-3">
+                                <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg p-1">
+                                    <button onClick={() => setWeekOffset(weekOffset - 1)} className="px-2 py-1.5 rounded-md hover:bg-white text-gray-500"><Icon name="ArrowLeft" size={14} /></button>
+                                    <div className="text-center px-2 min-w-[170px]">
+                                        <div className="text-sm font-bold text-gray-800">{fmtYMD(window.start)}（金）〜 {fmtMD(window.end)}（木）</div>
+                                        <div className="text-[10px] text-gray-400">{weekOffset === 0 ? '直近の完了週（報告対象）' : weekOffset < 0 ? `${Math.abs(weekOffset)}週前` : `${weekOffset}週先`}</div>
+                                    </div>
+                                    <button onClick={() => setWeekOffset(Math.min(0, weekOffset + 1))} disabled={weekOffset >= 0} className={`px-2 py-1.5 rounded-md ${weekOffset >= 0 ? 'text-gray-300 cursor-not-allowed' : 'hover:bg-white text-gray-500'}`}><Icon name="ArrowLeft" size={14} className="rotate-180" /></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 全社サマリー + 事業部別 */}
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white p-5 rounded-xl card-shadow">
+                            <div className="text-xs font-semibold text-blue-100 mb-1 flex items-center gap-1"><Icon name="Activity" size={14} /> 全社</div>
+                            <div className="text-3xl font-extrabold">{Utils.formatYen(companyCur.sales)}</div>
+                            <div className="text-xs text-blue-100 mt-0.5">売上 ／ <DeltaBadge cur={companyCur.sales} prev={companyPrev.sales} /></div>
+                            <div className="mt-3 pt-3 border-t border-white/20 flex justify-between text-sm">
+                                <div><div className="text-[10px] text-blue-100">粗利</div><div className="font-bold">{Utils.formatYen(companyCur.profit)}</div></div>
+                                <div><div className="text-[10px] text-blue-100">粗利率</div><div className="font-bold">{companyCur.margin.toFixed(1)}%</div></div>
+                                <div><div className="text-[10px] text-blue-100">案件数</div><div className="font-bold">{companyCur.count}件</div></div>
+                            </div>
+                        </div>
+                        {divStats.map(ds => { const col = divCardColor[ds.div]; return (
+                            <div key={ds.div} className={`bg-white p-5 rounded-xl card-shadow border-t-4 ${col.bar.replace('bg-', 'border-')}`}>
+                                <div className={`text-xs font-bold mb-1 ${col.text}`}>{ds.div}事業部</div>
+                                <div className="text-2xl font-extrabold text-gray-800">{Utils.formatYen(ds.cur.sales)}</div>
+                                <div className="text-xs text-gray-400 mt-0.5">売上 ／ <DeltaBadge cur={ds.cur.sales} prev={ds.prev.sales} /></div>
+                                <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between text-sm">
+                                    <div><div className="text-[10px] text-gray-400">粗利</div><div className="font-bold text-gray-700">{Utils.formatYen(ds.cur.profit)}</div></div>
+                                    <div><div className="text-[10px] text-gray-400">粗利率</div><div className="font-bold text-gray-700">{ds.cur.margin.toFixed(1)}%</div></div>
+                                    <div><div className="text-[10px] text-gray-400">案件数</div><div className="font-bold text-gray-700">{ds.cur.count}件</div></div>
+                                </div>
+                            </div>
+                        ); })}
+                    </div>
+
+                    {/* 週次の売上・粗利 推移（表） */}
+                    <div className="bg-white p-6 rounded-xl card-shadow">
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Icon name="TrendingUp" size={18} className="text-indigo-600" /> 週次推移<span className="text-xs font-normal text-gray-400">（新規登録ベース・金〜木）</span></h3>
+                                <p className="text-xs text-gray-400 mt-1">行をクリックすると、その週のデータを上部の集計に表示します。</p>
+                            </div>
+                            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                                <div className="flex gap-1.5 items-center flex-wrap">
+                                    <span className="text-xs text-gray-400">事業部:</span>
+                                    {[{ v: 'all', l: '全社' }, { v: '第1', l: '第1' }, { v: '第2', l: '第2' }, { v: '第3', l: '第3' }].map(o => (
+                                        <button key={o.v} onClick={() => setTrendDiv(o.v)} className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${trendDiv === o.v ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-blue-50'}`}>{o.l}</button>
+                                    ))}
+                                </div>
+                                <select className="border border-gray-200 rounded-lg text-xs px-2 py-1.5 bg-gray-50" value={trendWeeks} onChange={(e) => setTrendWeeks(parseInt(e.target.value))}>
+                                    <option value={12}>過去12週</option>
+                                    <option value={26}>過去26週</option>
+                                    <option value={52}>過去52週</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div className="overflow-x-auto scrollbar-thin max-h-[480px]">
+                            <table className="w-full text-sm text-left whitespace-nowrap">
+                                <thead><tr>{['週（金〜木）', '売上', '前週比', '粗利', '前週比', '粗利率', '件数'].map((h, i) => <th key={i} className={`${CLS.TH} ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>)}</tr></thead>
+                                <tbody className="divide-y divide-gray-100">
+                                    {weeklyTrend.map((r, i) => {
+                                        const Delta = ({ cur, prev }) => { if (prev == null) return <span className="text-gray-300">—</span>; const diff = cur - prev, up = diff >= 0; return <span className={`text-xs ${up ? 'text-green-600' : 'text-red-500'}`}>{up ? '▲' : '▼'}{Utils.formatYen(Math.abs(diff))}</span>; };
+                                        const selected = r.offset === weekOffset;
+                                        return (
+                                            <tr key={i} onClick={() => { setWeekOffset(r.offset); const m = document.querySelector('main'); if (m) m.scrollTo({ top: 0, behavior: 'smooth' }); }} className={`cursor-pointer transition-colors ${selected ? 'bg-blue-100 hover:bg-blue-100 ring-1 ring-inset ring-blue-300' : 'hover:bg-blue-50'}`}>
+                                                <td className="px-4 py-2.5 text-gray-700">{fmtMD(r.start)} 〜 {fmtMD(r.end)}{r.offset === 0 && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">今週</span>}{selected && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-indigo-600 text-white font-bold">表示中</span>}</td>
+                                                <td className="px-4 py-2.5 text-right font-bold text-gray-800">{Utils.formatYen(r.sales)}</td>
+                                                <td className="px-4 py-2.5 text-right"><Delta cur={r.sales} prev={r.prevSales} /></td>
+                                                <td className="px-4 py-2.5 text-right font-bold text-indigo-600">{Utils.formatYen(r.profit)}</td>
+                                                <td className="px-4 py-2.5 text-right"><Delta cur={r.profit} prev={r.prevProfit} /></td>
+                                                <td className="px-4 py-2.5 text-right text-gray-500">{r.margin.toFixed(1)}%</td>
+                                                <td className="px-4 py-2.5 text-right text-gray-500">{r.count}件</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    {/* 今週のトピック（大型案件） */}
+                    <div className="bg-white p-6 rounded-xl card-shadow">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Icon name="Star" size={18} className="text-amber-500" /> 今週のトピック<span className="text-xs font-normal text-gray-400">（売上 {Utils.formatYen(TOPIC_THRESHOLD)} 以上の大型案件）</span></h3>
+                        </div>
+                        {topics.length === 0 ? <div className="text-sm text-gray-400 py-6 text-center">対象期間に案件がありません</div> : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {topics.map((p, i) => { const big = p.sales >= TOPIC_THRESHOLD; const jobCat = Utils.getJobCategory(p.job); const jobText = String(p.job || '').trim() || jobCat; return (
+                                    <div key={i} className={`p-4 rounded-xl border ${big ? 'border-amber-300 bg-amber-50/50' : 'border-gray-100 bg-gray-50/50'}`}>
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="text-sm font-bold text-gray-800 break-words flex-1">{p.title}</div>
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white border text-gray-500 shrink-0">{divKey(p)}</span>
+                                        </div>
+                                        <div className="text-xs text-gray-500 mt-1 break-words">{(worksMaster && worksMaster[p.managerId]) || '作品未登録'} ／ {p.client || '—'}</div>
+                                        <div className="mt-2 flex flex-wrap gap-1.5">
+                                            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold border" style={{ backgroundColor: C.CAT_COLORS[jobCat] || 'rgba(148,163,184,0.18)', color: '#374151', borderColor: 'rgba(0,0,0,0.05)' }}>{jobText}</span>
+                                        </div>
+                                        <div className="mt-3 flex items-end justify-between">
+                                            <div><div className="text-[10px] text-gray-400">売上</div><div className={`text-lg font-extrabold ${big ? 'text-amber-600' : 'text-gray-700'}`}>{Utils.formatYen(p.sales)}</div></div>
+                                            <div className="text-right"><div className="text-[10px] text-gray-400">粗利</div><div className="text-sm font-bold text-indigo-600">{Utils.formatYen(p.profit)}</div></div>
+                                        </div>
+                                    </div>
+                                ); })}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 主な案件一覧 */}
+                    <div className="bg-white p-6 rounded-xl card-shadow">
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+                            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Icon name="Briefcase" size={18} className="text-blue-600" /> 今週の{noun}一覧<span className="text-xs font-normal text-gray-400">（{filteredProjects.length}件）</span></h3>
+                            <div className="flex gap-2 items-center">
+                                <span className="text-xs text-gray-400">事業部:</span>
+                                {[{ v: 'all', l: '全社' }, { v: '第1', l: '第1' }, { v: '第2', l: '第2' }, { v: '第3', l: '第3' }].map(o => (
+                                    <button key={o.v} onClick={() => setFilterDiv(o.v)} className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${filterDiv === o.v ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-blue-50'}`}>{o.l}</button>
+                                ))}
+                            </div>
+                        </div>
+                        <DataTable columns={projCols} data={filteredProjects} defaultSort={{ key: 'sales', direction: 'descending' }} height="h-[420px]" />
+                    </div>
+
+                    {/* 公開予定作品 × 営業状況 */}
+                    <div className="bg-white p-6 rounded-xl card-shadow">
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Icon name="Film" size={18} className="text-purple-600" /> この先売上を上げられそうな作品 × 営業状況</h3>
+                                <p className="text-xs text-gray-400 mt-1">{currentPeriod}期 公開作品スケジュールと案件実績を連動。未着手の作品は営業の伸びしろです。<span className="text-gray-300">／ 担当区分は配給で判定（第1=東宝, 第2=東宝東和・東和ピクチャーズ, 第3=その他）</span></p>
+                            </div>
+                            <div className="flex gap-1.5 items-center flex-wrap">
+                                <span className="text-xs text-gray-400">担当(配給):</span>
+                                {[{ v: 'all', l: '全社' }, { v: '第1', l: '第1' }, { v: '第2', l: '第2' }, { v: '第3', l: '第3' }].map(o => (
+                                    <button key={o.v} onClick={() => setUpDivFilter(o.v)} className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${upDivFilter === o.v ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-blue-50'}`}>{o.l}</button>
+                                ))}
+                                <span className="text-xs text-gray-400 ml-1">{oppSummary.total}作品 <span className="text-rose-500 font-semibold">（未着手 {oppSummary.untapped}）</span></span>
+                            </div>
+                        </div>
+                        {(!releaseSchedule || releaseSchedule.length === 0) ? (
+                            <div className="text-sm text-gray-400 py-8 text-center">公開作品スケジュールが未読込です。「作品」ページでCSVを読み込むか、スプレッドシート連携を確認してください。</div>
+                        ) : visibleUpcoming.length === 0 ? (
+                            <div className="text-sm text-gray-400 py-8 text-center">該当する公開予定作品がありません。</div>
+                        ) : (
+                            <DataTable columns={upCols} data={visibleUpcoming} defaultSort={{ key: 'releaseDate', direction: 'ascending' }} keyField="id" height="h-[480px]" />
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        const navItems = [{ id: 'dashboard', label: '全社', icon: 'Dashboard' }, { id: 'weekly', label: '週次', icon: 'Calendar' }, { id: 'division', label: '事業部', icon: 'Layout' }, { id: 'clients', label: '顧客', icon: 'Users' }, { id: 'works', label: '作品', icon: 'Film' }, { id: 'jobs', label: '職種', icon: 'BarChart' }, { id: 'expenses', label: '販管費', icon: 'CreditCard' }, { id: 'projects', label: '案件管理', icon: 'Briefcase' }, { id: 'history', label: '過去実績', icon: 'History' }, { id: 'report', label: '出力', icon: 'FileText' }];
 
         const MONTH_LABELS = ['3月','4月','5月','6月','7月','8月','9月','10月','11月','12月','1月','2月'];
 
@@ -2178,6 +2461,7 @@
                          {isLoading && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-sm"><div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center max-w-sm w-full relative overflow-hidden"><div className="mb-6 relative flex items-center justify-center h-20 w-20"><div className="absolute inset-0 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div><div className="relative bg-white p-4 rounded-full shadow-sm text-blue-600"><Icon name="TrendingUp" size={32} /></div></div><h3 className="text-lg font-bold text-gray-800 mb-2">データを同期中</h3><p className="text-xs text-gray-500 mb-1">{loadingStatus}</p></div></div>}
                          <ErrorBoundary>
                              {activeTab === 'dashboard' && <DashboardPage monthlyData={monthlyData} projectList={projectList} worksMaster={worksMaster} divisionMonthlyData={divisionMonthlyData} divisionData={divisionData} displayMode={displayMode} setDisplayMode={setDisplayMode} opMode={opMode} setOpMode={setOpMode} monthlyViewMode={monthlyViewMode} setMonthlyViewMode={setMonthlyViewMode} opViewMode={opViewMode} setOpViewMode={setOpViewMode} expenseViewMode={expenseViewMode} setExpenseViewMode={setExpenseViewMode} calculateRankedProjects={calculateRankedProjects} calculateRankedClients={calculateRankedClients} />}
+                             {activeTab === 'weekly' && <WeeklySummaryPage projectList={projectList} worksMaster={worksMaster} releaseSchedule={releaseSchedule} currentPeriod={currentPeriod} />}
                              {activeTab === 'expenses' && <ExpensesPage expenseDetails={expenseDetails} monthlyData={monthlyData} requestExpenseSort={requestExpenseSort} expenseSortConfig={expenseSortConfig} />}
                              {activeTab === 'history' && <HistoricalPage monthlyData={monthlyData} historicalData={historicalData} projectList={projectList} lastYearProjectList={lastYearProjectList} currentPeriod={currentPeriod} />}
                              {activeTab === 'clients' && <ClientAnalysisPage projectList={projectList} monthlyData={monthlyData} lastYearClientStats={lastYearClientStats} lastYearProjectList={lastYearProjectList} />}
