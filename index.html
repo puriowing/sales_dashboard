@@ -2480,5 +2480,45 @@
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
+    <script>
+        // 月次予実表の四半期行に半期・通期の集計行を追加する
+        (() => {
+            const yen = value => '¥' + Math.round(value).toLocaleString();
+            const valueOf = cell => Number(String(cell.textContent || '').replace(/[^0-9.-]/g, '')) || 0;
+            const addPeriodRows = () => {
+                document.querySelectorAll('table').forEach(table => {
+                    const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent.trim());
+                    if (headers.length !== 6 || !headers.includes('予実GAP') || !headers.includes('昨期GAP')) return;
+                    const body = table.querySelector('tbody');
+                    if (!body || body.dataset.halfYearRowsAdded) return;
+                    const rows = Array.from(body.querySelectorAll('tr'));
+                    const quarterRows = rows.filter(row => /第[1-4]四半期/.test(row.cells[0]?.textContent || ''));
+                    if (quarterRows.length < 4) return;
+                    const values = quarterRows.map(row => Array.from(row.cells).slice(1, 6).map(valueOf));
+                    const insertRow = (label, indexes, reference) => {
+                        // 列ごとに対象四半期を縦に合算する（予算/実績/予実GAP/昨期実績/昨期GAP）
+                        const totals = [0, 1, 2, 3, 4].map(col => indexes.reduce((sum, index) => sum + values[index][col], 0));
+                        const budget = totals[0], actual = totals[1], lastYear = totals[3];
+                        const cells = [label, yen(budget), yen(actual), yen(actual - budget), yen(lastYear), yen(actual - lastYear)];
+                        const row = document.createElement('tr');
+                        row.className = label === '通期' ? 'bg-[#e8dcc8] border-b-2 border-[#cdbb9f]' : 'bg-[#f5f0e6] border-b-2 border-[#e5dccb]';
+                        cells.forEach((cell, index) => {
+                            const td = document.createElement('td');
+                            td.className = `px-4 py-3 ${index === 0 ? 'text-blue-800 font-bold' : 'text-right text-blue-800 font-bold'}`;
+                            td.textContent = cell;
+                            row.appendChild(td);
+                        });
+                        reference.after(row);
+                    };
+                    insertRow('上期 (3-8月)', [0, 1], quarterRows[1]);
+                    insertRow('下期 (9-2月)', [2, 3], quarterRows[3]);
+                    insertRow('通期', [0, 1, 2, 3], quarterRows[3].nextElementSibling);
+                    body.dataset.halfYearRowsAdded = 'true';
+                });
+            };
+            new MutationObserver(addPeriodRows).observe(document.getElementById('root'), { childList: true, subtree: true });
+            addPeriodRows();
+        })();
+    </script>
 </body>
 </html>
