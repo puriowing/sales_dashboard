@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>売上管理ダッシュボード v18.7 (Complete Fix)</title>
+    <title>売上管理ダッシュボード v16 (見込・計上カーブ)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
@@ -92,6 +92,131 @@
             getFiscalMonthIndex: (dStr) => { if (!dStr) return -1; const d = Utils.parseDate(dStr); if (isNaN(d.getTime()) || d.getFullYear() < 2000) return -1; const m = d.getMonth(); let i = m - 2; if (i < 0) i += 12; return i; },
             getJobCategory: (n) => { if (!n) return 'その他案件'; const name = String(n); for (const k of ['広告', 'パブ', 'SNS', 'WEB', '制作', '宣伝', 'プロ']) if (name.includes(k)) return k === 'SNS' ? 'SNS運用' : (k === 'WEB' || k === '制作') ? 'WEB制作' : (k === '宣伝' || k === 'プロ') ? '宣プロ' : k; return 'その他案件'; },
             calculateCumulative: (d) => { let s = 0; return (Array.isArray(d) ? d : []).map(v => s += (Number(v) || 0)); }
+        };
+
+        // --- 3.5 Forecast Engine（計上カーブ自動算出） ---
+        const FC = {
+            BUILD: 'v15.3',
+            OFFSETS: [-7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3],
+            JOBS: [
+                { db: 'パブ', cat: 'パブ' },
+                { db: 'SNS', cat: 'SNS運用' },
+                { db: '制作', cat: 'WEB制作' },
+                { db: '広告', cat: '広告' },
+                { db: 'その他', cat: 'その他案件' }
+            ],
+            FALLBACK: { '-7': 0.02, '-6': 0.04, '-5': 0.07, '-4': 0.11, '-3': 0.16, '-2': 0.20, '-1': 0.20, '0': 0.13, '1': 0.05, '2': 0.02, '3': 0.00 },
+            MIN_SAMPLE: 25,
+            MIN_CONSUMED: 0.20,
+            monthKey: (v) => { const d = Utils.parseDate(v); if (!d || isNaN(d.getTime()) || d.getFullYear() < 2000) return null; return d.getFullYear() * 12 + d.getMonth(); },
+            periodStartKey: (period) => (1995 + Number(period || 0)) * 12 + 2,
+            // 年まで見て当期内の会計月(0=3月)を返す。期外は -1
+            fiscalIdx: (v, pStart) => { const k = FC.monthKey(v); if (k == null) return -1; const i = k - pStart; return (i >= 0 && i <= 11) ? i : -1; },
+            ERA: { current: { label: '今期公開', cls: 'bg-blue-50 text-blue-600 border-blue-200' }, future: { label: '来期公開', cls: 'bg-indigo-50 text-indigo-600 border-indigo-200' }, past: { label: '過年度公開', cls: 'bg-gray-100 text-gray-500 border-gray-200' }, unknown: { label: '公開日不明', cls: 'bg-gray-100 text-gray-400 border-gray-200' } },
+            normalize: (obj) => { const t = FC.OFFSETS.reduce((s, o) => s + (obj[o] || 0), 0); const out = {}; FC.OFFSETS.forEach(o => out[o] = t > 0 ? (obj[o] || 0) / t : 0); return out; },
+
+            build: (pool, workMap) => {
+                const raw = {}, margin = {}, n = {};
+                C.CATS.forEach(c => { raw[c] = {}; FC.OFFSETS.forEach(o => raw[c][o] = 0); margin[c] = { s: 0, p: 0 }; n[c] = 0; });
+                const rawAll = {}; FC.OFFSETS.forEach(o => rawAll[o] = 0);
+                let matched = 0, unmatched = 0, amtAll = 0, mS = 0, mP = 0;
+                (pool || []).forEach(p => {
+                    const cat = Utils.getJobCategory(p.job);
+                    const s = Number(p.sales) || 0, pr = Number(p.profit) || 0;
+                    if (s > 0) { margin[cat].s += s; margin[cat].p += pr; mS += s; mP += pr; }
+                    const w = workMap[String(p.managerId || '').trim()];
+                    const bk = FC.monthKey(p.date);
+                    if (s <= 0) return;
+                    if (!w || w.relKey == null || bk == null) { unmatched++; return; }
+                    const off = bk - w.relKey;
+                    if (off < FC.OFFSETS[0] || off > FC.OFFSETS[FC.OFFSETS.length - 1]) { unmatched++; return; }
+                    raw[cat][off] += s; rawAll[off] += s; n[cat]++; matched++; amtAll += s;
+                });
+                const overall = amtAll > 0 ? FC.normalize(rawAll) : FC.FALLBACK;
+                const curves = {};
+                C.CATS.forEach(c => {
+                    const tot = FC.OFFSETS.reduce((a, o) => a + raw[c][o], 0);
+                    const enough = n[c] >= FC.MIN_SAMPLE && tot > 0;
+                    curves[c] = {
+                        shares: enough ? FC.normalize(raw[c]) : overall,
+                        n: n[c], amount: tot,
+                        source: enough ? 'own' : (amtAll > 0 ? 'overall' : 'default'),
+                        margin: margin[c].s > 0 ? margin[c].p / margin[c].s : 0
+                    };
+                });
+                return { curves, overall, matched, unmatched, amount: amtAll, overallMargin: mS > 0 ? mP / mS : 0, ready: matched > 0 };
+            },
+
+            blendShares: (fc, jobAmounts) => {
+                let tot = 0; C.CATS.forEach(c => tot += (jobAmounts && jobAmounts[c]) || 0);
+                if (tot <= 0) return fc.overall;
+                const out = {}; FC.OFFSETS.forEach(o => out[o] = 0);
+                C.CATS.forEach(c => {
+                    const a = (jobAmounts && jobAmounts[c]) || 0; if (a <= 0) return;
+                    const sh = (fc.curves[c] && fc.curves[c].shares) || fc.overall;
+                    FC.OFFSETS.forEach(o => out[o] += (sh[o] || 0) * a / tot);
+                });
+                return FC.normalize(out);
+            },
+
+            blendMargin: (fc, jobAmounts) => {
+                let tot = 0, acc = 0;
+                C.CATS.forEach(c => { const a = (jobAmounts && jobAmounts[c]) || 0; if (a <= 0) return; tot += a; acc += a * ((fc.curves[c] && fc.curves[c].margin) || 0); });
+                return tot > 0 ? acc / tot : fc.overallMargin;
+            },
+
+            // 残額を将来月（minIdx以降）へカーブ比率で配分
+            distribute: (amount, relKey, pStart, shares, minIdx) => {
+                const out = Array(12).fill(0);
+                if (!amount || amount <= 0 || relKey == null) return out;
+                const slots = []; let w = 0;
+                FC.OFFSETS.forEach(o => {
+                    const sh = shares[o] || 0; if (sh <= 0) return;
+                    const fi = relKey + o - pStart;
+                    if (fi < 0 || fi > 11 || fi < minIdx) return;
+                    slots.push({ fi, sh }); w += sh;
+                });
+                if (w <= 0) {
+                    let fi = relKey - pStart; if (fi < minIdx) fi = minIdx;
+                    if (fi < 0 || fi > 11) return out;
+                    out[fi] += amount; return out;
+                }
+                slots.forEach(s => { out[s.fi] += amount * s.sh / w; });
+                return out;
+            },
+
+            // 期内の将来月にカーブの受け皿があるか
+            hasFutureSlot: (relKey, pStart, shares, minIdx) => {
+                if (relKey == null) return false;
+                return FC.OFFSETS.some(o => (shares[o] || 0) > 0.005 && (relKey + o - pStart) >= minIdx && (relKey + o - pStart) <= 11);
+            },
+
+            // 継続計上の見込。単発計上は対象外にし、直近の減衰トレンドを反映して逓減させる
+            runRateFc: (arr, curIdx, factor) => {
+                const out = Array(12).fill(0);
+                if (!arr || factor <= 0 || curIdx >= 12) return out;
+                const win = (a, b) => { const xs = []; for (let i = Math.max(0, a); i < Math.max(0, b); i++) xs.push(Number(arr[i]) || 0); return xs; };
+                const rec = win(curIdx - 3, curIdx);
+                if (rec.length < 2) return out;
+                if (rec.filter(v => v > 0).length < 2) return out;   // 単発の計上は継続と見なさない
+                const recent = rec.reduce((a, b) => a + b, 0) / rec.length;
+                if (recent <= 0) return out;
+                const pri = win(curIdx - 6, curIdx - 3);
+                const prior = pri.length ? pri.reduce((a, b) => a + b, 0) / pri.length : 0;
+                const trend = prior > 0 ? Math.min(1, recent / prior) : 1;   // 増加は見込まない
+                const decay = Math.pow(trend, 1 / 3);
+                let v = recent * factor;
+                for (let i = curIdx; i < 12; i++) { v = v * decay; out[i] = Math.max(0, v - (i === curIdx ? (Number(arr[i]) || 0) : 0)); }
+                return out;
+            },
+
+            // 締め済み月までに本来消化されているはずの比率
+            consumedShare: (relKey, shares, lastClosedKey) => {
+                if (relKey == null) return 0;
+                let acc = 0;
+                FC.OFFSETS.forEach(o => { if (relKey + o <= lastClosedKey) acc += (shares[o] || 0); });
+                return acc;
+            }
         };
 
         // --- 4. Logic ---
@@ -229,14 +354,27 @@
             },
             processExpenses: (rows) => {
                 if (!rows || !Array.isArray(rows)) return null;
-                const header = rows.find(r => r && String(r).includes("全社販管費実績")); if (!header) return null;
-                const idxAll = header.findIndex(c => String(c).replace(/\s/g, '').includes("全社販管費実績")); const idxM = header.findIndex(c => String(c).includes("月"));
-                const idx1 = header.findIndex(c => String(c).replace(/\s/g, '').includes("第1事業部販管費実績")); const idx2 = header.findIndex(c => String(c).replace(/\s/g, '').includes("第2事業部販管費実績")); const idx3 = header.findIndex(c => String(c).replace(/\s/g, '').includes("第3事業部販管費実績"));
+                const norm = (v) => String(v === null || v === undefined ? '' : v).replace(/\s/g, '').replace(/（/g, '(').replace(/）/g, ')');
+                // 旧シート「販管費実績」と新シート「予算実績リスト」の両方の見出しに対応する
+                const PAT = {
+                    all: ['全社販管費実績', '【実績】販管費(全社)'],
+                    d1: ['第1事業部販管費実績', '【実績】販管費(第1事業部)'],
+                    d2: ['第2事業部販管費実績', '【実績】販管費(第2事業部)'],
+                    d3: ['第3事業部販管費実績', '【実績】販管費(第3事業部)']
+                };
+                const findCol = (header, pats) => { for (let i = 0; i < pats.length; i++) { const j = header.findIndex(c => norm(c).includes(pats[i])); if (j !== -1) return j; } return -1; };
+                const header = rows.find(r => Array.isArray(r) && findCol(r, PAT.all) !== -1); if (!header) return null;
+                const idxAll = findCol(header, PAT.all), idx1 = findCol(header, PAT.d1), idx2 = findCol(header, PAT.d2), idx3 = findCol(header, PAT.d3);
+                const idxM = header.findIndex(c => norm(c).includes('月')); if (idxM === -1) return null;
                 const exp = Array(12).fill(0), de = { d1: Array(12).fill(0), d2: Array(12).fill(0), d3: Array(12).fill(0) };
                 rows.forEach(row => {
                     if (!row || !Array.isArray(row)) return;
-                    const mStr = String(row[idxM]), m = mStr.match(/(\d+)月/);
-                    if (m) { const fIdx = (parseInt(m[1], 10) - 3 + 12) % 12; if (idxAll > -1) exp[fIdx] = Utils.parseCurrency(row[idxAll]) / 1000; if (idx1 > -1) de.d1[fIdx] = Utils.parseCurrency(row[idx1]) / 1000; if (idx2 > -1) de.d2[fIdx] = Utils.parseCurrency(row[idx2]) / 1000; if (idx3 > -1) de.d3[fIdx] = Utils.parseCurrency(row[idx3]) / 1000; }
+                    const m = String(row[idxM]).match(/(\d+)月/); if (!m) return;
+                    const fIdx = (parseInt(m[1], 10) - 3 + 12) % 12;
+                    if (idxAll > -1) exp[fIdx] = Utils.parseCurrency(row[idxAll]) / 1000;
+                    if (idx1 > -1) de.d1[fIdx] = Utils.parseCurrency(row[idx1]) / 1000;
+                    if (idx2 > -1) de.d2[fIdx] = Utils.parseCurrency(row[idx2]) / 1000;
+                    if (idx3 > -1) de.d3[fIdx] = Utils.parseCurrency(row[idx3]) / 1000;
                 });
                 return { exp, de };
             },
@@ -1459,8 +1597,8 @@
                         <StatCard title="累計販管費" value={Utils.formatYen(totalExpAct)} budget={Utils.formatYen(totalExpBud)} achievement={totalExpBud>0?totalExpAct/totalExpBud*100:0} subValue={<span>GAP: {Utils.formatYen(totalExpAct-totalExpBud)}</span>} trend={totalExpAct<=totalExpBud?'up':'down'} isExpense={true} />
                         <StatCard title="累計営業利益" value={Utils.formatYen(totalOpAct)} budget={Utils.formatYen(totalOpBud)} achievement={totalOpBud!==0?totalOpAct/totalOpBud*100:0} subValue={<span>GAP: {Utils.formatYen(totalOpAct-totalOpBud)}</span>} trend={totalOpAct>=totalOpBud?'up':'down'} />
                     </div>
-                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">月次 予実推移 (vs 昨期)</h2><div className="flex gap-2"><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={monthlyViewMode} onChange={setMonthlyViewMode} /></div></div>{monthlyViewMode === 'chart' ? <div className="h-80 w-full"><ChartComponent type="bar" data={chartData} options={{ scales: { y: { ticks: { callback: (val) => Utils.formatYen(val) } } } }} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期GAP</th></tr></thead><tbody>{(() => { const labels = monthlyData.labels || []; const getB = (i) => (displayMode === 'sales' ? (monthlyData.budget || [])[i] : (monthlyData.budgetProfit || [])[i]) || 0; const getA = (i) => (displayMode === 'sales' ? (monthlyData.actual || [])[i] : (monthlyData.actualProfit || [])[i]) || 0; const getL = (i) => (displayMode === 'sales' ? (monthlyData.lastYear || [])[i] : (monthlyData.lastYearProfit || [])[i]) || 0; const qNames = ['第1四半期 (3-5月)', '第2四半期 (6-8月)', '第3四半期 (9-11月)', '第4四半期 (12-2月)']; const rows = []; let qB = 0, qA = 0, qL = 0; labels.forEach((label, i) => { const budget = getB(i), actual = getA(i), lastYear = getL(i); const gap = actual - budget, lastYearGap = actual - lastYear; qB += budget; qA += actual; qL += lastYear; rows.push(<tr key={'m' + i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-500">{Utils.formatYen(lastYear * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${lastYearGap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(lastYearGap * 1000)}</td></tr>); if (i % 3 === 2) { const qi = Math.floor(i / 3); const qgap = qA - qB, qlygap = qA - qL; rows.push(<tr key={'q' + qi} className="bg-blue-50 border-b-2 border-blue-200"><td className="px-4 py-3 text-blue-800 font-bold">{qNames[qi]}</td><td className="px-4 py-3 text-right text-blue-800 font-bold">{Utils.formatYen(qB * 1000)}</td><td className="px-4 py-3 text-right text-blue-900 font-extrabold">{Utils.formatYen(qA * 1000)}</td><td className={`px-4 py-3 text-right font-bold ${qgap >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Utils.formatYen(qgap * 1000)}</td><td className="px-4 py-3 text-right text-blue-700 font-bold">{Utils.formatYen(qL * 1000)}</td><td className={`px-4 py-3 text-right font-bold ${qlygap >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Utils.formatYen(qlygap * 1000)}</td></tr>); qB = 0; qA = 0; qL = 0; } }); return rows; })()}</tbody></table></div>}</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'monthly', label:'月次'}, {value:'cumulative', label:'累計'}]} value={opMode} onChange={setOpMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={opViewMode} onChange={setOpViewMode} /></div></div>{opViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', monthlyData.operatingProfit, monthlyData.operatingProfitBudget, opMode==='cumulative', monthlyData.labels)} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const actualData = opMode === 'cumulative' ? Utils.calculateCumulative(monthlyData.operatingProfit || []) : (monthlyData.operatingProfit || []); const budgetData = opMode === 'cumulative' ? Utils.calculateCumulative(monthlyData.operatingProfitBudget || []) : (monthlyData.operatingProfitBudget || []); const budget = (budgetData[i] || 0) * 1000; const actual = (actualData[i] || 0) * 1000; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap)}</td></tr>; })}</tbody></table></div>}</div><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">販管費 推移</h2><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={expenseViewMode} onChange={setExpenseViewMode} /></div>{expenseViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', monthlyData.expenses, monthlyData.expensesBudget, false, monthlyData.labels)} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const budget = ((monthlyData.expensesBudget || [])[i] || 0) * 1000; const actual = ((monthlyData.expenses || [])[i] || 0) * 1000; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap <= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap)}</td></tr>; })}</tbody></table></div>}</div></div>
+                    <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">月次 予実推移 (vs 昨期)</h2><div className="flex gap-2"><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={monthlyViewMode} onChange={setMonthlyViewMode} /></div></div>{monthlyViewMode === 'chart' ? <div className="h-80 w-full"><ChartComponent type="bar" data={chartData} options={{ scales: { y: { ticks: { callback: (val) => Utils.formatYen(val) } } } }} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期GAP</th></tr></thead><tbody>{(() => { const labels = monthlyData.labels || []; const getB = (i) => (displayMode === 'sales' ? (monthlyData.budget || [])[i] : (monthlyData.budgetProfit || [])[i]) || 0; const getA = (i) => (displayMode === 'sales' ? (monthlyData.actual || [])[i] : (monthlyData.actualProfit || [])[i]) || 0; const getL = (i) => (displayMode === 'sales' ? (monthlyData.lastYear || [])[i] : (monthlyData.lastYearProfit || [])[i]) || 0; const qNames = ['第1四半期 (3-5月)', '第2四半期 (6-8月)', '第3四半期 (9-11月)', '第4四半期 (12-2月)']; const hNames = { 5: '上期 (3-8月)', 11: '下期 (9-2月)' }; const rows = []; let qB = 0, qA = 0, qL = 0, hB = 0, hA = 0, hL = 0, yB = 0, yA = 0, yL = 0; labels.forEach((label, i) => { const budget = getB(i), actual = getA(i), lastYear = getL(i); const gap = actual - budget, lastYearGap = actual - lastYear; qB += budget; qA += actual; qL += lastYear; hB += budget; hA += actual; hL += lastYear; yB += budget; yA += actual; yL += lastYear; rows.push(<tr key={'m' + i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-500">{Utils.formatYen(lastYear * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${lastYearGap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(lastYearGap * 1000)}</td></tr>); if (i % 3 === 2) { const qi = Math.floor(i / 3); const qgap = qA - qB, qlygap = qA - qL; rows.push(<tr key={'q' + qi} className="bg-blue-50 border-b-2 border-blue-200"><td className="px-4 py-3 text-blue-800 font-bold">{qNames[qi]}</td><td className="px-4 py-3 text-right text-blue-800 font-bold">{Utils.formatYen(qB * 1000)}</td><td className="px-4 py-3 text-right text-blue-900 font-extrabold">{Utils.formatYen(qA * 1000)}</td><td className={`px-4 py-3 text-right font-bold ${qgap >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Utils.formatYen(qgap * 1000)}</td><td className="px-4 py-3 text-right text-blue-700 font-bold">{Utils.formatYen(qL * 1000)}</td><td className={`px-4 py-3 text-right font-bold ${qlygap >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Utils.formatYen(qlygap * 1000)}</td></tr>); qB = 0; qA = 0; qL = 0; } if (hNames[i]) { const P = (v) => Utils.formatYen(v * 1000); const cell = 'px-4 py-3 text-right text-blue-800 font-bold'; rows.push(<tr key={'h' + i} className="bg-[#f5f0e6] border-b-2 border-[#e5dccb]"><td className="px-4 py-3 text-blue-800 font-bold">{hNames[i]}</td><td className={cell}>{P(hB)}</td><td className={cell}>{P(hA)}</td><td className={cell}>{P(hA - hB)}</td><td className={cell}>{P(hL)}</td><td className={cell}>{P(hA - hL)}</td></tr>); hB = 0; hA = 0; hL = 0; if (i === 11) rows.push(<tr key="year" className="bg-[#e8dcc8] border-b-2 border-[#cdbb9f]"><td className="px-4 py-3 text-blue-800 font-bold">通期</td><td className={cell}>{P(yB)}</td><td className={cell}>{P(yA)}</td><td className={cell}>{P(yA - yB)}</td><td className={cell}>{P(yL)}</td><td className={cell}>{P(yA - yL)}</td></tr>); } }); return rows; })()}</tbody></table></div>}</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'monthly', label:'月次'}, {value:'cumulative', label:'累計'}]} value={opMode} onChange={setOpMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={opViewMode} onChange={setOpViewMode} /></div></div>{opViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', monthlyData.operatingProfit, monthlyData.operatingProfitBudget, opMode==='cumulative', monthlyData.labels)} /></div> : <BudgetActualTable labels={monthlyData.labels} budgetRow={opMode === 'cumulative' ? Utils.calculateCumulative(monthlyData.operatingProfitBudget || []) : (monthlyData.operatingProfitBudget || [])} actualRow={opMode === 'cumulative' ? Utils.calculateCumulative(monthlyData.operatingProfit || []) : (monthlyData.operatingProfit || [])} rawBudget={monthlyData.operatingProfitBudget} rawActual={monthlyData.operatingProfit} />}</div><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">販管費 推移</h2><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={expenseViewMode} onChange={setExpenseViewMode} /></div>{expenseViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', monthlyData.expenses, monthlyData.expensesBudget, false, monthlyData.labels)} /></div> : <BudgetActualTable labels={monthlyData.labels} budgetRow={monthlyData.expensesBudget} actualRow={monthlyData.expenses} rawBudget={monthlyData.expensesBudget} rawActual={monthlyData.expenses} lowerIsBetter />}</div></div>
                     <DashboardDivisionAnalysis monthlyData={monthlyData} divisionMonthlyData={divisionMonthlyData} divisionData={divisionData} />
                     <RankedProjectsSection projects={rankedProjects} title="作品別 粗利ランキング (Top 15)" />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><RankedClientsSection clients={rankedClients} /><ProfitShareSection projects={projectList} title="職種別 構成" /></div>
@@ -1500,7 +1638,7 @@
                          <div className="bg-white p-5 rounded-xl card-shadow flex justify-between items-center"><div><h3 className="text-xs font-medium text-gray-500 mb-1">稼働作品数</h3><div className="text-2xl font-bold text-gray-800 mb-1">{activeWorksCount}<span className="text-sm font-medium text-gray-500 ml-1">作品</span></div><p className="text-xs text-gray-400">粗利100万円以上</p></div><div className="text-gray-300"><Icon name="Film" size={40} /></div></div>
                     </div>
                     <div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-6"><h2 className="text-lg font-bold">{divLabel} 予実推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'sales', label:'売上', activeColor:'text-blue-600'}, {value:'profit', label:'粗利', activeColor:'text-green-600'}]} value={displayMode} onChange={setDisplayMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={viewMode} onChange={setViewMode} /></div></div>{viewMode === 'chart' ? <div className="h-80 w-full"><ChartComponent type="bar" data={{ labels: monthlyData.labels || [], datasets: [{ type: 'bar', label: '実績', data: (displayMode==='sales'?(divData.actual||[]):(divData.profit||[])).map(v=>v*1000), backgroundColor: displayMode==='sales'?C.COLORS.sales:C.COLORS.profit, order: 2, borderRadius: 4 }, { type: 'bar', label: '予実GAP', data: (displayMode==='sales'?(divData.actual||[]):(divData.profit||[])).map((v,i)=>{ const bud = displayMode==='sales'?(divData.budget||[])[i]:(divData.budgetProfit||[])[i]; return v*1000-(bud||0)*1000; }), backgroundColor: (ctx)=>ctx.raw>=0?C.COLORS.gapM:C.COLORS.gapP, order: 3, borderRadius: 2 }, { type: 'line', label: '予算', data: (displayMode==='sales'?(divData.budget||[]):(divData.budgetProfit||[])).map(v=>v*1000), borderColor: C.COLORS.budget, borderWidth: 2, borderDash: [5,5], fill: false, order: 4, pointRadius: 3, pointHoverRadius: 5 }] }} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">昨期GAP</th></tr></thead><tbody>{(() => { const labels = monthlyData.labels || []; const getB = (i) => (displayMode === 'sales' ? (divData.budget || [])[i] : (divData.budgetProfit || [])[i]) || 0; const getA = (i) => (displayMode === 'sales' ? (divData.actual || [])[i] : (divData.profit || [])[i]) || 0; const qNames = ['第1四半期 (3-5月)', '第2四半期 (6-8月)', '第3四半期 (9-11月)', '第4四半期 (12-2月)']; const rows = []; let qB = 0, qA = 0; labels.forEach((label, i) => { const budget = getB(i), actual = getA(i); const gap = actual - budget; qB += budget; qA += actual; rows.push(<tr key={'m' + i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual * 1000)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap * 1000)}</td><td className="px-4 py-3 border-b text-right text-gray-500">ー</td><td className="px-4 py-3 border-b text-right text-gray-500">ー</td></tr>); if (i % 3 === 2) { const qi = Math.floor(i / 3); const qgap = qA - qB; rows.push(<tr key={'q' + qi} className="bg-blue-50 border-b-2 border-blue-200"><td className="px-4 py-3 text-blue-800 font-bold">{qNames[qi]}</td><td className="px-4 py-3 text-right text-blue-800 font-bold">{Utils.formatYen(qB * 1000)}</td><td className="px-4 py-3 text-right text-blue-900 font-extrabold">{Utils.formatYen(qA * 1000)}</td><td className={`px-4 py-3 text-right font-bold ${qgap >= 0 ? 'text-green-700' : 'text-red-700'}`}>{Utils.formatYen(qgap * 1000)}</td><td className="px-4 py-3 text-right text-blue-700 font-bold">ー</td><td className="px-4 py-3 text-right text-blue-700 font-bold">ー</td></tr>); qB = 0; qA = 0; } }); return rows; })()}</tbody></table></div>}</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'monthly', label:'月次'}, {value:'cumulative', label:'累計'}]} value={opMode} onChange={setOpMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={opViewMode} onChange={setOpViewMode} /></div></div>{opViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', divData.op, divData.opBudget, opMode==='cumulative', monthlyData.labels)} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const actualData = opMode === 'cumulative' ? Utils.calculateCumulative(divData.op || []) : (divData.op || []); const budgetData = opMode === 'cumulative' ? Utils.calculateCumulative(divData.opBudget || []) : (divData.opBudget || []); const budget = (budgetData[i] || 0) * 1000; const actual = (actualData[i] || 0) * 1000; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap >= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap)}</td></tr>; })}</tbody></table></div>}</div><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">販管費 推移</h2><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={expenseViewMode} onChange={setExpenseViewMode} /></div>{expenseViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', divData.expenses, divData.expensesBudget, false, monthlyData.labels)} /></div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-gray-50"><th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b">月</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予算</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">実績</th><th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b">予実GAP</th></tr></thead><tbody>{(monthlyData.labels || []).map((label, i) => { const budget = ((divData.expensesBudget || [])[i] || 0) * 1000; const actual = ((divData.expenses || [])[i] || 0) * 1000; const gap = actual - budget; return <tr key={i} className="hover:bg-gray-50"><td className="px-4 py-3 border-b text-gray-700 font-medium">{label}</td><td className="px-4 py-3 border-b text-right text-gray-700">{Utils.formatYen(budget)}</td><td className="px-4 py-3 border-b text-right text-gray-800 font-semibold">{Utils.formatYen(actual)}</td><td className={`px-4 py-3 border-b text-right font-semibold ${gap <= 0 ? 'text-green-600' : 'text-red-600'}`}>{Utils.formatYen(gap)}</td></tr>; })}</tbody></table></div>}</div></div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">営業利益 推移</h2><div className="flex gap-2"><ToggleButton options={[{value:'monthly', label:'月次'}, {value:'cumulative', label:'累計'}]} value={opMode} onChange={setOpMode} /><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={opViewMode} onChange={setOpViewMode} /></div></div>{opViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('営業利益', divData.op, divData.opBudget, opMode==='cumulative', monthlyData.labels)} /></div> : <BudgetActualTable labels={monthlyData.labels} budgetRow={opMode === 'cumulative' ? Utils.calculateCumulative(divData.opBudget || []) : (divData.opBudget || [])} actualRow={opMode === 'cumulative' ? Utils.calculateCumulative(divData.op || []) : (divData.op || [])} rawBudget={divData.opBudget} rawActual={divData.op} />}</div><div className="bg-white p-6 rounded-xl card-shadow"><div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800 mb-0">販管費 推移</h2><ToggleButton options={[{value:'chart', label:'グラフ'}, {value:'table', label:'表'}]} value={expenseViewMode} onChange={setExpenseViewMode} /></div>{expenseViewMode === 'chart' ? <div className="h-64 w-full"><ChartComponent type="bar" data={ChartHelpers.createChartData('販管費', divData.expenses, divData.expensesBudget, false, monthlyData.labels)} /></div> : <BudgetActualTable labels={monthlyData.labels} budgetRow={divData.expensesBudget} actualRow={divData.expenses} rawBudget={divData.expensesBudget} rawActual={divData.expenses} lowerIsBetter />}</div></div>
                     <RankedProjectsSection projects={rankedProjects} title={`${divLabel} 作品別粗利ランキング（100万円以上）`} />
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6"><RankedClientsSection clients={rankedClients} /><ProfitShareSection projects={filteredProjects} title={`${divLabel} 職種別 構成`} /></div>
                     <RecentGrowthCard title={`${divLabel} 直近の実績`} data={recentData} period={period} setPeriod={setPeriod} recentProjects={recentProjects} worksMaster={worksMaster} />
@@ -2230,9 +2368,1034 @@
             );
         }
 
-        const navItems = [{ id: 'dashboard', label: '全社', icon: 'Dashboard' }, { id: 'weekly', label: '週次', icon: 'Calendar' }, { id: 'division', label: '事業部', icon: 'Layout' }, { id: 'clients', label: '顧客', icon: 'Users' }, { id: 'works', label: '作品', icon: 'Film' }, { id: 'jobs', label: '職種', icon: 'BarChart' }, { id: 'expenses', label: '販管費', icon: 'CreditCard' }, { id: 'projects', label: '案件管理', icon: 'Briefcase' }, { id: 'history', label: '過去実績', icon: 'History' }, { id: 'report', label: '出力', icon: 'FileText' }];
+        const navItems = [{ id: 'dashboard', label: '全社', icon: 'Dashboard' }, { id: 'weekly', label: '週次', icon: 'Calendar' }, { id: 'forecast', label: '見込', icon: 'TrendingUp' }, { id: 'division', label: '事業部', icon: 'Layout' }, { id: 'clients', label: '顧客', icon: 'Users' }, { id: 'works', label: '作品', icon: 'Film' }, { id: 'jobs', label: '職種', icon: 'BarChart' }, { id: 'expenses', label: '販管費', icon: 'CreditCard' }, { id: 'projects', label: '案件管理', icon: 'Briefcase' }, { id: 'history', label: '過去実績', icon: 'History' }, { id: 'report', label: '出力', icon: 'FileText' }];
 
         const MONTH_LABELS = ['3月','4月','5月','6月','7月','8月','9月','10月','11月','12月','1月','2月'];
+
+
+        // --- 見込ページ（作品×月マトリクス ＋ 計上カーブ） ---
+        const FCSRC = {
+            plan: { label: 'DB見込', cls: 'bg-blue-100 text-blue-700 border-blue-200' },
+            curve: { label: 'カーブ推計', cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+            actual: { label: '実績のみ', cls: 'bg-gray-100 text-gray-500 border-gray-200' },
+            none: { label: '見込未入力', cls: 'bg-red-100 text-red-600 border-red-200' },
+            lag: { label: '未計上', cls: 'bg-rose-100 text-rose-700 border-rose-200' },
+            tail: { label: '継続ランレート', cls: 'bg-teal-100 text-teal-700 border-teal-200' },
+            runrate: { label: 'ランレート', cls: 'bg-violet-100 text-violet-700 border-violet-200' }
+        };
+        const fmtK = (v) => { const k = Math.round((Number(v) || 0) / 1000); return k === 0 ? '' : k.toLocaleString(); };
+        const fmtM = (v) => { const n = Number(v) || 0; if (Math.abs(n) >= 100000000) return (n / 100000000).toFixed(2) + '億'; if (Math.abs(n) >= 10000) return Math.round(n / 10000).toLocaleString() + '万'; return Math.round(n).toLocaleString(); };
+
+        function FcStat({ label, value, sub, tone = 'gray', big }) {
+            const tones = { gray: 'text-gray-800', blue: 'text-blue-600', amber: 'text-amber-600', green: 'text-emerald-600', red: 'text-red-600', slate: 'text-slate-600' };
+            return (
+                <div className="bg-white rounded-xl px-4 py-3 border border-gray-200 card-shadow">
+                    <div className="text-[11px] font-semibold text-gray-500 mb-1">{label}</div>
+                    <div className={`${big ? 'text-2xl' : 'text-xl'} font-bold tabular-nums ${tones[tone]}`}>{value}</div>
+                    {sub && <div className="text-[11px] text-gray-400 mt-0.5">{sub}</div>}
+                </div>
+            );
+        }
+
+        function CurveBar({ shares, height = 46 }) {
+            const max = Math.max(...FC.OFFSETS.map(o => shares[o] || 0), 0.0001);
+            return (
+                <div className="flex items-end gap-[2px]" style={{ height }}>
+                    {FC.OFFSETS.map(o => {
+                        const v = shares[o] || 0;
+                        return <div key={o} className="flex-1 flex flex-col justify-end" title={`${o > 0 ? '+' : ''}${o}ヶ月: ${(v * 100).toFixed(1)}%`}>
+                            <div className={`rounded-t ${o === 0 ? 'bg-red-400' : o < 0 ? 'bg-blue-400' : 'bg-emerald-400'}`} style={{ height: `${Math.max(2, v / max * height)}px` }}></div>
+                        </div>;
+                    })}
+                </div>
+            );
+        }
+
+        const FDIVS = [
+            { k: 'div1', label: '第1事業部', short: '第1', color: '#60A5FA' },
+            { k: 'div2', label: '第2事業部', short: '第2', color: '#34D399' },
+            { k: 'div3', label: '第3事業部', short: '第3', color: '#FBBF24' }
+        ];
+
+        function Waterfall({ steps, budget, height = 300 }) {
+            const W = 1000, ML = 56, MR = 16, MT = 42, MB = 54;
+            const IW = W - ML - MR, IH = height - MT - MB;
+            let run = 0;
+            const bars = steps.map(st => {
+                if (st.type === 'total') return { ...st, y0: 0, y1: run, val: run };
+                if (st.type === 'diff') { const v = run - budget; return { ...st, y0: Math.min(budget, run), y1: Math.max(budget, run), val: v }; }
+                const y0 = run, y1 = run + st.value; run = y1; return { ...st, y0, y1, val: st.value };
+            });
+            const top = Math.max(run, budget, ...bars.map(b => b.y1)) * 1.12 || 1;
+            const bw = IW / bars.length;
+            const Y = (v) => MT + IH - (v / top) * IH;
+            const bY = Y(budget);
+            return (
+                <svg viewBox={`0 0 ${W} ${height}`} width="100%" style={{ display: 'block' }}>
+                    {[0, 0.25, 0.5, 0.75, 1].map(f => <line key={f} x1={ML} x2={W - MR} y1={MT + IH * f} y2={MT + IH * f} stroke="#f1f5f9" strokeWidth="1" />)}
+                    <line x1={ML} x2={W - MR} y1={MT + IH} y2={MT + IH} stroke="#cbd5e1" strokeWidth="1" />
+                    {budget > 0 && <g>
+                        <line x1={ML} x2={W - MR} y1={bY} y2={bY} stroke="#475569" strokeWidth="1.5" strokeDasharray="6 4" />
+                        <line x1={ML} x2={ML + 22} y1={14} y2={14} stroke="#475569" strokeWidth="1.5" strokeDasharray="6 4" />
+                        <text x={ML + 28} y={18} textAnchor="start" fontSize="12" fontWeight="700" fill="#475569">期予算 {fmtM(budget)}</text>
+                    </g>}
+                    {bars.map((b, i) => {
+                        const x = ML + i * bw + bw * 0.16, w = bw * 0.68;
+                        const yTop = Y(Math.max(b.y0, b.y1)), h = Math.max(2, Math.abs(Y(b.y0) - Y(b.y1)));
+                        const zero = Math.abs(b.val) < 1;
+                        return (
+                            <g key={i}>
+                                {i > 0 && bars[i - 1].type !== 'total' && b.type === 'add' && <line x1={ML + (i - 1) * bw + bw * 0.84} x2={x} y1={Y(b.y0)} y2={Y(b.y0)} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3 3" />}
+                                <rect x={x} y={yTop} width={w} height={h} fill={b.color} rx="2" opacity={zero ? 0.25 : 1} />
+                                <text x={x + w / 2} y={yTop - 7} textAnchor="middle" fontSize="13" fontWeight="700" fill={b.type === 'diff' ? b.color : '#1e293b'}>
+                                    {b.type === 'add' && b.val > 0 && i > 0 ? '+' : b.type === 'diff' ? (b.val >= 0 ? '+' : '−') : ''}{fmtM(Math.abs(b.val))}
+                                </text>
+                                <text x={x + w / 2} y={MT + IH + 18} textAnchor="middle" fontSize="11.5" fontWeight={b.type === 'total' ? 700 : 500} fill="#475569">{b.label}</text>
+                                {b.sub && <text x={x + w / 2} y={MT + IH + 33} textAnchor="middle" fontSize="10" fill="#94a3b8">{b.sub}</text>}
+                            </g>
+                        );
+                    })}
+                </svg>
+            );
+        }
+
+        function MonthlyLanding({ act, fc, budget, curIdx, height = 300 }) {
+            const W = 1000, ML = 62, MR = 16, MT = 26, MB = 42;
+            const IW = W - ML - MR, IH = height - MT - MB;
+            const hasBud = budget.some(v => v > 0);
+            const top = Math.max(...act.map((v, i) => v + fc[i]), ...(hasBud ? budget : [0]), 1) * 1.15;
+            const bw = IW / 12;
+            const Y = (v) => MT + IH - (v / top) * IH;
+            const cx = (i) => ML + i * bw + bw / 2;
+            const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => top * f);
+            const line = budget.map((v, i) => `${i === 0 ? 'M' : 'L'}${cx(i)},${Y(v)}`).join(' ');
+            return (
+                <svg viewBox={`0 0 ${W} ${height}`} width="100%" style={{ display: 'block' }}>
+                    {ticks.map((t, i) => <g key={i}>
+                        <line x1={ML} x2={W - MR} y1={Y(t)} y2={Y(t)} stroke={i === 0 ? '#cbd5e1' : '#f1f5f9'} strokeWidth="1" />
+                        <text x={ML - 8} y={Y(t) + 4} textAnchor="end" fontSize="10" fill="#94a3b8">{fmtM(t)}</text>
+                    </g>)}
+                    {curIdx > 0 && curIdx < 12 && <g>
+                        <line x1={ML + curIdx * bw} x2={ML + curIdx * bw} y1={MT - 8} y2={MT + IH} stroke="#94a3b8" strokeWidth="1" strokeDasharray="4 3" />
+                        <text x={ML + curIdx * bw + 5} y={MT - 12} fontSize="10" fontWeight="700" fill="#94a3b8">ここから見込</text>
+                    </g>}
+                    {act.map((a, i) => {
+                        const f = fc[i], x = ML + i * bw + bw * 0.2, w = bw * 0.6;
+                        return <g key={i}>
+                            {a > 0 && <rect x={x} y={Y(a)} width={w} height={Math.max(1, MT + IH - Y(a))} fill="#3b82f6" rx="1.5" />}
+                            {f > 0 && <rect x={x} y={Y(a + f)} width={w} height={Math.max(1, Y(a) - Y(a + f))} fill="#f59e0b" rx="1.5" />}
+                            {(a + f) > 0 && <text x={x + w / 2} y={Y(a + f) - 5} textAnchor="middle" fontSize="9.5" fontWeight="600" fill={f > a ? '#b45309' : '#1e40af'}>{fmtM(a + f)}</text>}
+                        </g>;
+                    })}
+                    {hasBud && <g>
+                        <path d={line} fill="none" stroke="#475569" strokeWidth="2" strokeDasharray="5 4" />
+                        {budget.map((v, i) => <circle key={i} cx={cx(i)} cy={Y(v)} r="2.5" fill="#475569" />)}
+                    </g>}
+                    {MONTH_LABELS.map((m, i) => <text key={m} x={cx(i)} y={MT + IH + 17} textAnchor="middle" fontSize="11" fontWeight={i === curIdx ? 700 : 400} fill={i === curIdx ? '#2563eb' : '#64748b'}>{m}</text>)}
+                </svg>
+            );
+        }
+
+        function AssumptionPanel({ AS, compact }) {
+            const sel = "text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white";
+            return (
+                <div className={compact ? "flex flex-wrap items-center gap-2" : "bg-amber-50/60 border border-amber-200 rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-2"}>
+                    {!compact && <span className="text-[11px] font-bold text-amber-800 flex items-center gap-1.5"><Icon name="Settings" size={13} />見込の前提</span>}
+                    {!compact && (
+                        <div className="flex items-center gap-1">
+                            {[{ k: '保守的', v: { runRate: 0.5, curveCap: 1.5, includeLag: false } },
+                              { k: '標準', v: { runRate: 1, curveCap: 2, includeLag: false } },
+                              { k: '強気', v: { runRate: 1, curveCap: 3, includeLag: true } }].map(pz => {
+                                const on = AS.runRate === pz.v.runRate && AS.curveCap === pz.v.curveCap && AS.includeLag === pz.v.includeLag;
+                                return <button key={pz.k} onClick={() => { AS.setRunRate(pz.v.runRate); AS.setCurveCap(pz.v.curveCap); AS.setIncludeLag(pz.v.includeLag); }}
+                                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold border transition-colors ${on ? 'bg-amber-600 text-white border-amber-700' : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-100'}`}>{pz.k}</button>;
+                            })}
+                        </div>
+                    )}
+                    <label className="flex items-center gap-1.5 text-[11px] text-gray-700">
+                        <span className="font-semibold">継続案件の先行き</span>
+                        <select className={sel} value={AS.runRate} onChange={e => AS.setRunRate(Number(e.target.value))}>
+                            <option value={1}>実績トレンドどおり（100%）</option>
+                            <option value={0.75}>さらに絞る（75%）</option>
+                            <option value={0.5}>半分に見る（50%）</option>
+                            <option value={0}>見込まない（0%）</option>
+                        </select>
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-gray-700">
+                        <span className="font-semibold">カーブ逆算の上限</span>
+                        <select className={sel} value={AS.curveCap} onChange={e => AS.setCurveCap(Number(e.target.value))}>
+                            <option value={1.5}>実績の1.5倍まで</option>
+                            <option value={2}>実績の2倍まで</option>
+                            <option value={3}>実績の3倍まで</option>
+                            <option value={99}>上限なし</option>
+                        </select>
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-gray-700 cursor-pointer">
+                        <input type="checkbox" checked={AS.includeLag} onChange={e => AS.setIncludeLag(e.target.checked)} />
+                        <span className="font-semibold">未計上（要確認）も着地に含める</span>
+                    </label>
+                </div>
+            );
+        }
+
+        function ForecastPage({ allWorks, releaseSchedule, projectList, lastYearProjectList, historicalData, monthlyData, divisionMonthlyData, worksMaster, currentPeriod }) {
+            const [sub, setSub] = useState('summary');
+            const [metric, setMetric] = useState('sales');
+            const [divFilter, setDivFilter] = useState('all');
+            const [srcFilter, setSrcFilter] = useState('all');
+            const [eraFilter, setEraFilter] = useState('all');
+            const [q, setQ] = useState('');
+            const [sortKey, setSortKey] = useState('release');
+            const [openId, setOpenId] = useState(null);
+            const [includeLag, setIncludeLag] = useState(false);
+            const [runRate, setRunRate] = useState(1);
+            const [curveCap, setCurveCap] = useState(2);
+
+            const pStart = FC.periodStartKey(currentPeriod);
+            const today = new Date();
+            const nowKey = today.getFullYear() * 12 + today.getMonth();
+            const curIdx = Math.max(0, Math.min(11, nowKey - pStart));
+            const lastClosedKey = pStart + curIdx - 1;
+
+            const workMap = useMemo(() => { const m = {}; (allWorks || []).forEach(w => { if (w.id) m[w.id] = w; }); return m; }, [allWorks]);
+
+            const fc = useMemo(() => {
+                const pool = [];
+                Object.values(historicalData || {}).forEach(h => { if (h && h.projects) pool.push.apply(pool, h.projects); });
+                if (lastYearProjectList) pool.push.apply(pool, lastYearProjectList);
+                if (projectList) pool.push.apply(pool, projectList);
+                return FC.build(pool, workMap);
+            }, [workMap, historicalData, lastYearProjectList, projectList]);
+
+            const distDivMap = useMemo(() => {
+                const agg = {};
+                (projectList || []).forEach(p => {
+                    const w = workMap[String(p.managerId || '').trim()]; if (!w || !w.distributor || !p.div) return;
+                    if (!agg[w.distributor]) agg[w.distributor] = {};
+                    agg[w.distributor][p.div] = (agg[w.distributor][p.div] || 0) + (p.sales || 0);
+                });
+                const out = {};
+                Object.entries(agg).forEach(([d, m]) => { out[d] = Object.entries(m).sort((a, b) => b[1] - a[1])[0][0]; });
+                return out;
+            }, [projectList, workMap]);
+
+            // 作品ごとの全期間実績（過去期の売上シートを含む）。DB見込額は作品の通算総額なので、残額はこれを基準に出す。
+            const lifetimeAct = useMemo(() => {
+                const m = {};
+                const add = (list) => (list || []).forEach(p => {
+                    const id = String(p.managerId || '').trim(); if (!id) return;
+                    if (!m[id]) m[id] = { s: 0, p: 0 };
+                    m[id].s += Number(p.sales) || 0; m[id].p += Number(p.profit) || 0;
+                });
+                Object.values(historicalData || {}).forEach(h => { if (h && h.projects) add(h.projects); });
+                add(lastYearProjectList); add(projectList);
+                return m;
+            }, [historicalData, lastYearProjectList, projectList]);
+
+            const matrix = useMemo(() => {
+                const act = {}, noWork = { sales: Array(12).fill(0), profit: Array(12).fill(0) }, nwDiv = {};
+                const skipped = { count: 0, sales: 0 }, actDiv = {};
+                (projectList || []).forEach(p => {
+                    const fi = FC.fiscalIdx(p.date, pStart);
+                    if (fi < 0) { skipped.count++; skipped.sales += (p.sales || 0); return; }
+                    const dk = p.div || '未配分';
+                    if (!actDiv[dk]) actDiv[dk] = { s: 0, p: 0 };
+                    actDiv[dk].s += (p.sales || 0); actDiv[dk].p += (p.profit || 0);
+                    const id = String(p.managerId || '').trim();
+                    if (!id || !workMap[id]) {
+                        noWork.sales[fi] += (p.sales || 0); noWork.profit[fi] += (p.profit || 0);
+                        const dv = p.div || '未配分';
+                        if (!nwDiv[dv]) nwDiv[dv] = { sales: Array(12).fill(0), profit: Array(12).fill(0) };
+                        nwDiv[dv].sales[fi] += (p.sales || 0); nwDiv[dv].profit[fi] += (p.profit || 0);
+                        return;
+                    }
+                    if (!act[id]) act[id] = { sales: Array(12).fill(0), profit: Array(12).fill(0), jobs: {}, jobsP: {}, divs: {}, clients: {} };
+                    const a = act[id];
+                    a.sales[fi] += (p.sales || 0); a.profit[fi] += (p.profit || 0);
+                    const c = Utils.getJobCategory(p.job);
+                    a.jobs[c] = (a.jobs[c] || 0) + (p.sales || 0); a.jobsP[c] = (a.jobsP[c] || 0) + (p.profit || 0);
+                    if (p.div) a.divs[p.div] = (a.divs[p.div] || 0) + (p.sales || 0);
+                    if (p.client) a.clients[p.client] = (a.clients[p.client] || 0) + (p.profit || 0);
+                });
+
+                const ids = {};
+                (releaseSchedule || []).forEach(w => { if (w.id && workMap[w.id]) ids[w.id] = 1; });
+                Object.keys(act).forEach(id => ids[id] = 1);
+
+                const rows = Object.keys(ids).map(id => {
+                    const w = workMap[id];
+                    const a = act[id] || { sales: Array(12).fill(0), profit: Array(12).fill(0), jobs: {}, jobsP: {}, divs: {}, clients: {} };
+                    const planJobs = w.planJobs || {};
+                    let planJobTotal = 0; C.CATS.forEach(c => planJobTotal += (planJobs[c] || 0));
+                    const mix = planJobTotal > 0 ? planJobs : a.jobs;
+                    const shares = FC.blendShares(fc, mix);
+                    const actS = a.sales.reduce((x, y) => x + y, 0), actP = a.profit.reduce((x, y) => x + y, 0);
+                    const planS = (w.planSales || 0) > 0 ? w.planSales : planJobTotal;
+                    let planP = w.planProfit || 0;
+                    if (planS > 0 && planP <= 0) planP = planS * FC.blendMargin(fc, mix);
+
+                    const relFi = w.relKey != null ? w.relKey - pStart : null;
+                    const life = lifetimeAct[id] || { s: 0, p: 0 };
+                    const isPast = relFi != null && relFi < 0;
+                    let remS = 0, remP = 0, src = 'none';
+                    let fcS = Array(12).fill(0), fcP = Array(12).fill(0);
+
+                    let lagS = 0, lagP = 0;
+                    if (isPast) {
+                        // 過年度公開：DB見込額は過去期に計上済みのため使わず、継続計上の実績トレンドから推計
+                        const ts = FC.runRateFc(a.sales, curIdx, runRate), tp = FC.runRateFc(a.profit, curIdx, runRate);
+                        if (ts.some(v => v > 0)) { src = 'tail'; fcS = ts; fcP = tp; } else src = 'actual';
+                    } else {
+                        if (planS > 0) {
+                            src = 'plan';
+                            remS = Math.max(0, planS - life.s); remP = Math.max(0, planP - life.p);
+                        } else if (life.s > 0) {
+                            const cons = FC.consumedShare(w.relKey, shares, lastClosedKey);
+                            if (cons >= FC.MIN_CONSUMED && cons < 0.985) {
+                                src = 'curve';
+                                // 逆算の倍率に上限を設ける（薄い実績からの過大推計を防ぐ）
+                                const mult = Math.min(1 / cons, curveCap);
+                                remS = Math.max(0, life.s * mult - life.s); remP = Math.max(0, life.p * mult - life.p);
+                            } else src = 'actual';
+                        }
+                        if (remS > 0 && (src === 'plan' || src === 'curve') && !FC.hasFutureSlot(w.relKey, pStart, shares, curIdx)) src = 'lag';
+                        fcS = FC.distribute(remS, w.relKey, pStart, shares, curIdx);
+                        fcP = FC.distribute(remP, w.relKey, pStart, shares, curIdx);
+                        if (src === 'lag') {
+                            lagS = fcS.reduce((x, y) => x + y, 0); lagP = fcP.reduce((x, y) => x + y, 0);
+                            if (!includeLag) { fcS = Array(12).fill(0); fcP = Array(12).fill(0); }
+                        }
+                    }
+                    // 当期に配分された分だけを「見込」として扱う（期をまたぐ分は当期の着地に含めない）
+                    remS = fcS.reduce((x, y) => x + y, 0); remP = fcP.reduce((x, y) => x + y, 0);
+                    const landS = actS + remS, landP = actP + remP;
+                    const era = relFi == null ? 'unknown' : relFi < 0 ? 'past' : relFi > 11 ? 'future' : 'current';
+                    const relYear = w.releaseDate ? w.releaseDate.substring(0, 4) : '';
+                    const domDiv = Object.entries(a.divs).sort((x, y) => y[1] - x[1])[0];
+                    const div = domDiv ? domDiv[0] : (distDivMap[w.distributor] || '');
+                    const domCli = Object.entries(a.clients).sort((x, y) => y[1] - x[1])[0];
+                    return {
+                        id, name: w.name || worksMaster[id] || id, releaseDate: w.releaseDate, relFi, era, relYear,
+                        distributor: w.distributor, category: w.category, div, client: domCli ? domCli[0] : '',
+                        actMS: a.sales, actMP: a.profit, fcMS: fcS, fcMP: fcP,
+                        actS, actP, landS, landP, remS, remP, planS, planP, src, lifeS: life.s, lifeP: life.p, lagS, lagP,
+                        jobsAct: a.jobs, jobsActP: a.jobsP, planJobs, shares
+                    };
+                });
+
+                // 作品コード紐付なし（一般案件）: 直近3ヶ月のランレートで残月を推計
+                const sum12 = (x) => x.reduce((a, b) => a + b, 0);
+                const nwFcS = Array(12).fill(0), nwFcP = Array(12).fill(0), nwDivFc = {};
+                Object.entries(nwDiv).forEach(([dv, o]) => {
+                    const fs = FC.runRateFc(o.sales, curIdx, runRate), fp = FC.runRateFc(o.profit, curIdx, runRate);
+                    for (let i = 0; i < 12; i++) { nwFcS[i] += fs[i]; nwFcP[i] += fp[i]; }
+                    nwDivFc[dv] = { actS: sum12(o.sales), actP: sum12(o.profit), remS: sum12(fs), remP: sum12(fp) };
+                });
+                const nwActS = noWork.sales.reduce((x, y) => x + y, 0), nwActP = noWork.profit.reduce((x, y) => x + y, 0);
+                const nwRow = {
+                    id: '__nowork__', name: '作品コード紐付なし（一般案件ほか）', releaseDate: '', relFi: null, era: 'unknown', relYear: '',
+                    distributor: '', category: '', div: '', client: '',
+                    actMS: noWork.sales, actMP: noWork.profit, fcMS: nwFcS, fcMP: nwFcP,
+                    actS: nwActS, actP: nwActP,
+                    landS: nwActS + nwFcS.reduce((x, y) => x + y, 0), landP: nwActP + nwFcP.reduce((x, y) => x + y, 0),
+                    remS: nwFcS.reduce((x, y) => x + y, 0), remP: nwFcP.reduce((x, y) => x + y, 0),
+                    planS: 0, planP: 0, src: 'runrate', lifeS: 0, lifeP: 0, lagS: 0, lagP: 0, jobsAct: {}, jobsActP: {}, planJobs: {}, shares: {}
+                };
+                return { rows, nwRow, nwDivFc, skipped, actDiv };
+            }, [projectList, releaseSchedule, workMap, fc, pStart, curIdx, lastClosedKey, distDivMap, worksMaster, runRate, includeLag, curveCap, lifetimeAct]);
+
+            const divs = useMemo(() => {
+                const s = {}; matrix.rows.forEach(r => { if (r.div) s[r.div] = 1; });
+                return Object.keys(s).sort();
+            }, [matrix]);
+
+            const shown = useMemo(() => {
+                let rs = matrix.rows.slice();
+                if (eraFilter !== 'all') rs = rs.filter(r => r.era === eraFilter);
+                if (divFilter !== 'all') rs = rs.filter(r => r.div === divFilter);
+                if (srcFilter !== 'all') rs = rs.filter(r => srcFilter === 'hasfc' ? (r.src === 'plan' || r.src === 'curve' || r.src === 'lag' || r.src === 'tail') : r.src === srcFilter);
+                if (q) { const k = q.toLowerCase(); rs = rs.filter(r => (r.name || '').toLowerCase().includes(k) || (r.distributor || '').toLowerCase().includes(k) || (r.client || '').toLowerCase().includes(k) || (r.id || '').toLowerCase().includes(k)); }
+                const key = metric === 'sales' ? 'landS' : 'landP', rkey = metric === 'sales' ? 'remS' : 'remP';
+                const grp = { current: 0, future: 1, past: 2, unknown: 3 };
+                const inner = sortKey === 'release'
+                    ? (a, b) => (a.releaseDate || '9999').localeCompare(b.releaseDate || '9999')
+                    : sortKey === 'landing' ? (a, b) => b[key] - a[key] : (a, b) => b[rkey] - a[rkey];
+                rs.sort((a, b) => (grp[a.era] - grp[b.era]) || inner(a, b));
+                return rs;
+            }, [matrix, divFilter, srcFilter, eraFilter, q, sortKey, metric]);
+
+            const showNw = useMemo(() => (matrix.nwRow.actS > 0 || matrix.nwRow.remS > 0)
+                && divFilter === 'all' && !q && eraFilter === 'all' && (srcFilter === 'all' || srcFilter === 'runrate'), [matrix, divFilter, q, srcFilter, eraFilter]);
+            const AS = { runRate, setRunRate, includeLag, setIncludeLag, curveCap, setCurveCap };
+
+            const bud = useMemo(() => {
+                const bRaw = metric === 'sales' ? (monthlyData.budget || []) : (monthlyData.budgetProfit || []);
+                return Array(12).fill(0).map((_, i) => (Number(bRaw[i]) || 0) * 1000);
+            }, [metric, monthlyData]);
+
+            const aggregate = useCallback((rs) => {
+                const aM = Array(12).fill(0), fM = Array(12).fill(0);
+                rs.forEach(r => { const a = metric === 'sales' ? r.actMS : r.actMP, f = metric === 'sales' ? r.fcMS : r.fcMP; for (let i = 0; i < 12; i++) { aM[i] += a[i]; fM[i] += f[i]; } });
+                const sum = (x) => x.reduce((s, v) => s + v, 0);
+                return { aM, fM, bud, act: sum(aM), fcst: sum(fM), land: sum(aM) + sum(fM), budget: sum(bud) };
+            }, [metric, bud]);
+
+            const totals = useMemo(() => aggregate(shown.concat(showNw ? [matrix.nwRow] : [])), [aggregate, shown, showNw, matrix]);
+            const totalsAll = useMemo(() => aggregate(matrix.rows.concat(matrix.nwRow.actS > 0 || matrix.nwRow.remS > 0 ? [matrix.nwRow] : [])), [aggregate, matrix]);
+
+            const maxCell = useMemo(() => {
+                let m = 0; shown.forEach(r => { const a = metric === 'sales' ? r.actMS : r.actMP, f = metric === 'sales' ? r.fcMS : r.fcMP; for (let i = 0; i < 12; i++) m = Math.max(m, a[i] + f[i]); });
+                return m || 1;
+            }, [shown, metric]);
+
+            const noneCount = matrix.rows.filter(r => r.src === 'none' && r.relFi != null && r.relFi >= curIdx).length;
+            const lagRows = matrix.rows.filter(r => r.src === 'lag');
+            const lagAmt = lagRows.reduce((s, r) => s + (metric === 'sales' ? r.lagS : r.lagP), 0);
+            const hasBudget = totalsAll.budget > 0;
+            const tail = useMemo(() => {
+                const rs = matrix.rows.filter(r => r.era === 'past');
+                return { n: rs.length, act: rs.reduce((a, r) => a + (metric === 'sales' ? r.actS : r.actP), 0) };
+            }, [matrix, metric]);
+            const gap = totalsAll.land - totalsAll.budget;
+
+            const summary = useMemo(() => {
+                const pick = (r) => metric === 'sales' ? r.remS : r.remP;
+                const bucket = (t) => matrix.rows.filter(r => r.src === t).reduce((a, r) => a + pick(r), 0);
+                return {
+                    act: totalsAll.act,
+                    planFc: bucket('plan'), curveFc: bucket('curve'), lagFc: bucket('lag'),
+                    tailFc: bucket('tail'),
+                    nwFc: metric === 'sales' ? matrix.nwRow.remS : matrix.nwRow.remP,
+                    land: totalsAll.land, budget: totalsAll.budget,
+                    cntPlan: matrix.rows.filter(r => r.src === 'plan').length,
+                    cntCurve: matrix.rows.filter(r => r.src === 'curve').length,
+                    cntLag: lagRows.length
+                };
+            }, [matrix, totalsAll, metric, lagRows]);
+
+            const breakdown = useMemo(() => {
+                const defs = [
+                    { k: 'plan', how: '案件管理DBの見込額 − 過去期を含む通算実績' },
+                    { k: 'curve', how: `通算実績 × 計上カーブによる逆算（上限${curveCap === 99 ? 'なし' : curveCap + '倍'}）` },
+                    { k: 'tail', how: `過年度公開作品の直近3ヶ月平均 × ${Math.round(runRate * 100)}%。直近の減速トレンドに合わせて毎月逓減。単発計上のみの作品は対象外` },
+                    { k: 'runrate', how: `一般案件の直近3ヶ月平均 × ${Math.round(runRate * 100)}%。同じく減速トレンドを反映して逓減` },
+                    { k: 'lag', how: includeLag ? '公開済み・請求残を当月に計上（着地に算入）' : '公開済み・請求残（着地には含めていない）' },
+                    { k: 'actual', how: '計上完了とみなし、追加の見込なし' },
+                    { k: 'none', how: 'DBに見込額がなく実績もない（見込ゼロ扱い）' }
+                ];
+                const all = matrix.rows.concat([matrix.nwRow]);
+                return defs.map(d => {
+                    const rs = all.filter(r => r.src === d.k);
+                    const act = rs.reduce((a, r) => a + (metric === 'sales' ? r.actS : r.actP), 0);
+                    const fcst = rs.reduce((a, r) => a + (metric === 'sales' ? r.remS : r.remP), 0);
+                    const pot = d.k === 'lag' && !includeLag ? rs.reduce((a, r) => a + (metric === 'sales' ? r.lagS : r.lagP), 0) : 0;
+                    return { ...d, label: FCSRC[d.k].label, cls: FCSRC[d.k].cls, n: rs.length, act, fcst, pot, land: act + fcst };
+                }).filter(d => d.n > 0);
+            }, [matrix, metric, curveCap, runRate, includeLag]);
+
+            const divRows = useMemo(() => {
+                const kSum = (arr) => (arr || []).reduce((a, v) => a + (Number(v) || 0), 0) * 1000;
+                const known = { '第1': 1, '第2': 1, '第3': 1 };
+                const rows = FDIVS.map(d => {
+                    const dm = (divisionMonthlyData && divisionMonthlyData[d.k]) || {};
+                    const budget = kSum(metric === 'sales' ? dm.budget : dm.budgetProfit);
+                    const ad = matrix.actDiv[d.short] || { s: 0, p: 0 };
+                    const act = metric === 'sales' ? ad.s : ad.p;
+                    const works = matrix.rows.filter(r => r.div === d.short).reduce((a, r) => a + (metric === 'sales' ? r.remS : r.remP), 0);
+                    const nw = matrix.nwDivFc[d.short] || {};
+                    const fc = works + (metric === 'sales' ? (nw.remS || 0) : (nw.remP || 0));
+                    return { ...d, budget, act, fc, land: act + fc, works, gen: metric === 'sales' ? (nw.remS || 0) : (nw.remP || 0) };
+                });
+                const sb = rows.reduce((a, r) => a + r.budget, 0), sa = rows.reduce((a, r) => a + r.act, 0), sf = rows.reduce((a, r) => a + r.fc, 0);
+                const un = { k: 'un', label: '未配分・差分', short: '', color: '#cbd5e1', budget: totalsAll.budget - sb, act: totalsAll.act - sa, fc: totalsAll.fcst - sf };
+                un.land = un.act + un.fc;
+                const scale = Math.max(Math.abs(totalsAll.land), 1);
+                const showUn = Math.abs(un.act) + Math.abs(un.fc) + Math.abs(un.budget) > scale * 0.005;
+                return { rows, un, showUn, total: { label: '全社', budget: totalsAll.budget, act: totalsAll.act, fc: totalsAll.fcst, land: totalsAll.land } };
+            }, [matrix, divisionMonthlyData, metric, totalsAll]);
+
+            const actionLists = useMemo(() => ({
+                none: matrix.rows.filter(r => r.src === 'none' && r.relFi != null && r.relFi >= curIdx).sort((a, b) => (a.releaseDate || '').localeCompare(b.releaseDate || '')).slice(0, 12),
+                lag: lagRows.slice().sort((a, b) => (metric === 'sales' ? b.remS - a.remS : b.remP - a.remP)).slice(0, 12)
+            }), [matrix, lagRows, curIdx, metric]);
+
+            const exportCsv = () => {
+                const head = ['管理番号', '作品名', '公開日', '公開時期', '配給', '事業部', '顧客', '区分', metric === 'sales' ? '着地売上' : '着地粗利', '実績', '見込'].concat(MONTH_LABELS.map(m => m + '実績')).concat(MONTH_LABELS.map(m => m + '見込'));
+                const body = shown.concat(showNw ? [matrix.nwRow] : []).map(r => {
+                    const a = metric === 'sales' ? r.actMS : r.actMP, f = metric === 'sales' ? r.fcMS : r.fcMP;
+                    return [r.id, r.name, r.releaseDate, (FC.ERA[r.era] || {}).label || '', r.distributor, r.div, r.client, FCSRC[r.src].label,
+                        Math.round(metric === 'sales' ? r.landS : r.landP), Math.round(metric === 'sales' ? r.actS : r.actP), Math.round(metric === 'sales' ? r.remS : r.remP)]
+                        .concat(a.map(v => Math.round(v))).concat(f.map(v => Math.round(v)));
+                });
+                const esc = (v) => { const t = String(v == null ? '' : v); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+                const csv = '\uFEFF' + [head].concat(body).map(row => row.map(esc).join(',')).join('\n');
+                const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+                const a = document.createElement('a');
+                a.href = url; a.download = `${currentPeriod}期_作品別見込_${metric === 'sales' ? '売上' : '粗利'}.csv`;
+                document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+            };
+
+            const Th = ({ children, className = '' }) => <th className={`px-2 py-2 text-[11px] font-semibold text-gray-500 bg-gray-100 border-b border-gray-200 whitespace-nowrap ${className}`}>{children}</th>;
+
+            const MonthCell = ({ a, f, isRel, lag, tail }) => {
+                const tot = a + f;
+                const op = tot > 0 ? Math.min(0.16, tot / maxCell * 0.16) : 0;
+                const fcTone = lag ? 'rgba(225,29,72,' : tail ? 'rgba(20,184,166,' : 'rgba(245,158,11,';
+                return (
+                    <td className="px-1.5 py-1.5 text-right border-b border-gray-100 relative tabular-nums" style={{ backgroundColor: f > 0 ? `${fcTone}${op})` : `rgba(37,99,235,${op})` }}>
+                        {isRel && <span className="absolute left-1 top-0.5 text-[9px] text-red-500 leading-none">▼</span>}
+                        {a > 0 && <div className="text-[11px] font-bold text-blue-900 leading-tight">{fmtK(a)}</div>}
+                        {f > 0 && <div className={`text-[11px] font-semibold italic leading-tight ${lag ? 'text-rose-600' : tail ? 'text-teal-600' : 'text-amber-600'}`}>{fmtK(f)}</div>}
+                        {a === 0 && f === 0 && <div className="text-[11px] text-gray-200">·</div>}
+                    </td>
+                );
+            };
+
+            const Row = ({ r }) => {
+                const a = metric === 'sales' ? r.actMS : r.actMP, f = metric === 'sales' ? r.fcMS : r.fcMP;
+                const land = metric === 'sales' ? r.landS : r.landP, actT = metric === 'sales' ? r.actS : r.actP, rem = metric === 'sales' ? r.remS : r.remP;
+                const s = FCSRC[r.src];
+                const open = openId === r.id;
+                return (
+                    <React.Fragment>
+                        <tr className={`hover:bg-blue-50/50 cursor-pointer ${open ? 'bg-blue-50' : ''}`} onClick={() => setOpenId(open ? null : r.id)}>
+                            <td className="sticky left-0 z-10 bg-white px-3 py-1.5 border-b border-r border-gray-200 w-[248px] max-w-[248px]">
+                                <div className="text-[12px] font-bold text-gray-800 truncate" title={r.name}>{r.name}</div>
+                                <div className="text-[10px] text-gray-400 truncate">{r.distributor || '—'}{r.client ? ` ／ ${r.client}` : ''}</div>
+                            </td>
+                            <td className="px-2 py-1.5 text-[10px] border-b border-gray-100 whitespace-nowrap">
+                                <span className={r.era === 'past' ? 'text-gray-400' : 'text-gray-600'}>{r.releaseDate ? r.releaseDate.substring(2) : '—'}</span>
+                                {r.era === 'past' && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-500 font-bold">継続</span>}
+                                {r.era === 'future' && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-indigo-50 text-indigo-600 font-bold">来期</span>}
+                            </td>
+                            <td className="px-2 py-1.5 text-[10px] text-gray-600 border-b border-gray-100 whitespace-nowrap">{r.div || '—'}</td>
+                            <td className="px-2 py-1.5 border-b border-gray-100 whitespace-nowrap"><span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold ${s.cls}`}>{s.label}</span></td>
+                            <td className="px-2 py-1.5 text-right text-[11px] font-bold text-gray-900 border-b border-gray-100 tabular-nums bg-gray-50">{fmtK(land)}</td>
+                            <td className="px-2 py-1.5 text-right text-[11px] text-blue-800 border-b border-gray-100 tabular-nums">{fmtK(actT)}</td>
+                            <td className={`px-2 py-1.5 text-right text-[11px] font-semibold border-b border-r border-gray-200 tabular-nums ${r.src === 'lag' ? 'text-rose-600' : 'text-amber-600'}`}>{fmtK(rem)}</td>
+                            {Array(12).fill(0).map((_, i) => <MonthCell key={i} a={a[i]} f={f[i]} isRel={r.relFi === i} lag={r.src === 'lag'} tail={r.src === 'tail'} />)}
+                        </tr>
+                        {open && (
+                            <tr className="bg-slate-50">
+                                <td colSpan={19} className="px-4 py-3 border-b border-gray-200">
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                        <div>
+                                            <div className="text-[11px] font-bold text-gray-600 mb-2">職種別 見込 vs 実績（単位：千円）<span className="ml-2 font-normal text-gray-400">通算計上 {fmtK(metric === 'sales' ? r.lifeS : r.lifeP)} ／ うち当期 {fmtK(metric === 'sales' ? r.actS : r.actP)}</span></div>
+                                            <table className="w-full text-[11px]">
+                                                <thead><tr className="text-gray-400"><th className="text-left font-semibold pb-1">職種</th><th className="text-right font-semibold pb-1">DB見込売上</th><th className="text-right font-semibold pb-1">実績売上</th><th className="text-right font-semibold pb-1">実績粗利</th></tr></thead>
+                                                <tbody>
+                                                    {C.CATS.filter(c => (r.planJobs[c] || 0) > 0 || (r.jobsAct[c] || 0) > 0).map(c => (
+                                                        <tr key={c} className="border-t border-gray-200"><td className="py-1 text-gray-700">{c}</td><td className="py-1 text-right tabular-nums text-blue-700">{fmtK(r.planJobs[c] || 0) || '—'}</td><td className="py-1 text-right tabular-nums">{fmtK(r.jobsAct[c] || 0) || '—'}</td><td className="py-1 text-right tabular-nums text-gray-500">{fmtK(r.jobsActP[c] || 0) || '—'}</td></tr>
+                                                    ))}
+                                                    {C.CATS.every(c => (r.planJobs[c] || 0) === 0 && (r.jobsAct[c] || 0) === 0) && <tr><td colSpan={4} className="py-2 text-gray-400">内訳データなし</td></tr>}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <div>
+                                            <div className="text-[11px] font-bold text-gray-600 mb-2">この作品に適用した計上カーブ（公開月＝0）</div>
+                                            <CurveBar shares={r.shares} height={40} />
+                                            <div className="flex justify-between text-[9px] text-gray-400 mt-1">{FC.OFFSETS.map(o => <span key={o} className="flex-1 text-center">{o > 0 ? '+' + o : o}</span>)}</div>
+                                            <div className="text-[10px] text-gray-500 mt-2 leading-relaxed">
+                                                {r.src === 'plan' && <>案件管理DBの見込額（作品の通算総額）<b>{Utils.formatYen(metric === 'sales' ? r.planS : r.planP)}</b> から、過去期を含む計上済み <b>{Utils.formatYen(metric === 'sales' ? r.lifeS : r.lifeP)}</b> を差し引いた残額を、上のカーブで当期の将来月に配分しています。</>}
+                                                {r.src === 'curve' && <>DBに見込額が未入力のため、過去期を含む計上済み <b>{Utils.formatYen(metric === 'sales' ? r.lifeS : r.lifeP)}</b> から<b>カーブで通算着地を逆算</b>し、その残額を当期の将来月に配分しています。</>}
+                                                {r.src === 'lag' && <>すでに公開済みで、過去の計上カーブ上は請求が終わっているはずの作品です。DB見込 <b>{Utils.formatYen(metric === 'sales' ? r.planS : r.planP)}</b> に対し実績が {Utils.formatYen(metric === 'sales' ? r.actS : r.actP)} しかありません。<b className="text-rose-600">請求漏れか、DBの見込額が古い可能性があります。</b>残額は当月に寄せて表示しています。</>}
+                                                {r.src === 'actual' && <>計上がほぼ完了しており、追加の見込は立てていません。</>}
+                                                {r.src === 'none' && <>案件管理DBに見込額が未入力で、実績もまだありません。<b className="text-red-600">見込の入力が必要です。</b></>}
+                                                {r.src === 'tail' && <>過年度公開（{r.relYear}年）で当期も計上が続いている作品です。DBの見込額は過去期にほぼ計上済みのため使わず、<b>当期の直近3ヶ月の平均ペース</b>で残月を推計しています。</>}
+                                                {r.src === 'runrate' && <>作品に紐づかない一般案件です。直近3ヶ月の平均（ランレート）で残月を推計しています。</>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        )}
+                    </React.Fragment>
+                );
+            };
+
+            if (!fc.ready && (allWorks || []).length === 0) {
+                return <div className="bg-white p-10 rounded-xl card-shadow text-center text-gray-500"><Icon name="Alert" size={28} className="mx-auto mb-3 text-amber-500" />案件管理DB（公開作品データ）が読み込まれていません。<br /><span className="text-xs">右上の「連携」からスプレッドシートを接続するか、案件管理DBのCSVをドラッグ＆ドロップしてください。</span></div>;
+            }
+
+            return (
+                <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex bg-white rounded-lg border border-gray-200 p-1 shadow-sm">
+                            {[{ k: 'summary', l: '着地見込' }, { k: 'matrix', l: '作品×月マトリクス' }, { k: 'curve', l: '計上カーブ' }].map(t => (
+                                <button key={t.k} onClick={() => setSub(t.k)} className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${sub === t.k ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}>{t.l}</button>
+                            ))}
+                        </div>
+                        <div className="text-[11px] text-gray-500"><span className="mr-2 px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-mono text-[10px]">{FC.BUILD}</span>{currentPeriod}期（{1995 + currentPeriod}年3月〜{1996 + currentPeriod}年2月）／ 基準月：<b>{MONTH_LABELS[curIdx]}</b></div>
+                    </div>
+
+                    {sub === 'summary' && (
+                        <div className="space-y-4">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <ToggleButton options={[{ value: 'sales', label: '売上' }, { value: 'profit', label: '粗利' }]} value={metric} onChange={setMetric} />
+                            </div>
+                            <AssumptionPanel AS={AS} />
+
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                                <FcStat label="期予算" value={hasBudget ? fmtM(summary.budget) : '—'} tone="slate" sub={hasBudget ? '' : '予算データ未読込'} />
+                                <FcStat label={`実績累計（〜${MONTH_LABELS[Math.max(0, curIdx - 1)]}）`} value={fmtM(summary.act)} tone="blue" sub={hasBudget ? `予算消化 ${(summary.act / summary.budget * 100).toFixed(1)}%` : ''} />
+                                <FcStat label="着地見込" value={fmtM(summary.land)} tone="gray" big sub={`うち今後の見込 ${fmtM(totalsAll.fcst)}`} />
+                                <FcStat label="予算差異" value={hasBudget ? (gap >= 0 ? '+' : '−') + fmtM(Math.abs(gap)) : '—'} tone={!hasBudget ? 'gray' : gap >= 0 ? 'green' : 'red'} big sub={hasBudget ? `着地達成率 ${(summary.land / summary.budget * 100).toFixed(1)}%` : '予算データ未読込'} />
+                            </div>
+
+                            <div className="bg-white rounded-xl card-shadow border border-gray-200 p-5">
+                                <h3 className="text-sm font-bold text-gray-700 mb-1">予算に対する着地の内訳</h3>
+                                <p className="text-[11px] text-gray-400 mb-2">実績累計に、見込の種類別の積み上げを足した結果が着地見込です。破線が期予算。</p>
+                                <Waterfall
+                                    budget={summary.budget}
+                                    steps={[
+                                        { label: '実績累計', sub: `〜${MONTH_LABELS[Math.max(0, curIdx - 1)]}`, value: summary.act, color: '#3b82f6', type: 'add' },
+                                        { label: 'DB見込', sub: `${summary.cntPlan}本`, value: summary.planFc, color: '#f59e0b', type: 'add' },
+                                        { label: 'カーブ推計', sub: `${summary.cntCurve}本`, value: summary.curveFc, color: '#fbbf24', type: 'add' },
+                                        { label: '未計上', sub: `${summary.cntLag}本・要確認`, value: summary.lagFc, color: '#f43f5e', type: 'add' },
+                                        { label: '継続作品', sub: '過年度公開', value: summary.tailFc, color: '#14b8a6', type: 'add' },
+                                        { label: '一般案件', sub: 'ランレート', value: summary.nwFc, color: '#a78bfa', type: 'add' },
+                                        { label: '着地見込', color: '#1e3a8a', type: 'total' },
+                                        { label: '予算差異', color: gap >= 0 ? '#10b981' : '#ef4444', type: 'diff' }
+                                    ]}
+                                />
+                                <div className="overflow-x-auto mt-4 border-t border-gray-100 pt-4">
+                                    <table className="min-w-full text-xs">
+                                        <thead><tr className="bg-gray-50">
+                                            <th className="px-3 py-2 text-left font-semibold text-gray-500">区分</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">本数</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">実績</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">見込</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">着地</th>
+                                            <th className="px-3 py-2 text-left font-semibold text-gray-500">計算方法</th>
+                                        </tr></thead>
+                                        <tbody>
+                                            {breakdown.map(b => (
+                                                <tr key={b.k} className="border-t border-gray-100">
+                                                    <td className="px-3 py-2 whitespace-nowrap"><span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${b.cls}`}>{b.label}</span></td>
+                                                    <td className="px-3 py-2 text-right tabular-nums text-gray-500">{b.n}</td>
+                                                    <td className="px-3 py-2 text-right tabular-nums text-blue-700">{b.act > 0 ? fmtM(b.act) : '—'}</td>
+                                                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-amber-600">{b.fcst > 0 ? fmtM(b.fcst) : (b.pot > 0 ? <span className="text-gray-400 font-normal">（{fmtM(b.pot)}）</span> : '—')}</td>
+                                                    <td className="px-3 py-2 text-right tabular-nums font-bold text-gray-800">{b.land > 0 ? fmtM(b.land) : '—'}</td>
+                                                    <td className="px-3 py-2 text-[10px] text-gray-500">{b.how}</td>
+                                                </tr>
+                                            ))}
+                                            <tr className="border-t-2 border-gray-300 bg-slate-50 font-bold">
+                                                <td className="px-3 py-2 text-gray-800">合計</td>
+                                                <td className="px-3 py-2 text-right tabular-nums text-gray-500">{breakdown.reduce((a, b) => a + b.n, 0)}</td>
+                                                <td className="px-3 py-2 text-right tabular-nums text-blue-700">{fmtM(totalsAll.act)}</td>
+                                                <td className="px-3 py-2 text-right tabular-nums text-amber-600">{fmtM(totalsAll.fcst)}</td>
+                                                <td className="px-3 py-2 text-right tabular-nums text-gray-900">{fmtM(totalsAll.land)}</td>
+                                                <td className="px-3 py-2 text-[10px] text-gray-400">カッコ内は着地に含めていない金額</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="text-[11px] text-gray-500 mt-3 leading-relaxed border-t border-gray-100 pt-3">
+                                    実績累計は{currentPeriod}期（{1995 + currentPeriod}年3月〜{1996 + currentPeriod}年2月）に請求日があるboard明細のみを集計しています。
+                                    {tail.n > 0 && <>このうち <b className="text-gray-700">{fmtM(tail.act)}</b> は過年度公開作品（{tail.n}本）の継続計上分です。</>}
+                                    {matrix.skipped.count > 0 && <span className="text-amber-600"> 請求日が期の範囲外だった明細 {matrix.skipped.count}件（{fmtM(matrix.skipped.sales)}）は除外しています。</span>}
+                                </div>
+                            </div>
+
+                            <div className="bg-white rounded-xl card-shadow border border-gray-200 p-5">
+                                <div className="flex items-center justify-between mb-2">
+                                    <h3 className="text-sm font-bold text-gray-700">月次の着地見込 vs 予算</h3>
+                                    <div className="flex items-center gap-3 text-[10px] text-gray-500">
+                                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-500"></span>実績</span>
+                                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-500"></span>見込</span>
+                                        <span className="flex items-center gap-1"><span className="w-4 h-0 border-t-2 border-dashed border-slate-600"></span>予算</span>
+                                    </div>
+                                </div>
+                                <MonthlyLanding act={totalsAll.aM} fc={totalsAll.fM} budget={totalsAll.bud} curIdx={curIdx} />
+                            </div>
+
+                            <div className="bg-white rounded-xl card-shadow border border-gray-200">
+                                <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+                                    <h3 className="text-sm font-bold text-gray-700">事業部別 着地見込・達成率</h3>
+                                    <span className="text-[10px] text-gray-400">単位：百万／億</span>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full text-xs">
+                                        <thead><tr className="bg-gray-50">
+                                            <th className="px-4 py-2 text-left font-semibold text-gray-500">事業部</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">期予算</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">実績累計</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">今後の見込</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">着地見込</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">予算差異</th>
+                                            <th className="px-4 py-2 text-left font-semibold text-gray-500 w-56">着地達成率</th>
+                                        </tr></thead>
+                                        <tbody>
+                                            {divRows.rows.concat(divRows.showUn ? [divRows.un] : []).map(d => {
+                                                const g = d.land - d.budget, rate = d.budget > 0 ? d.land / d.budget * 100 : 0;
+                                                const actRate = d.budget > 0 ? Math.min(100, d.act / d.budget * 100) : 0;
+                                                const fcRate = d.budget > 0 ? Math.min(100 - actRate, d.fc / d.budget * 100) : 0;
+                                                const over = Math.max(0, rate - 100);
+                                                return (
+                                                    <tr key={d.k} className="border-t border-gray-100 hover:bg-gray-50">
+                                                        <td className="px-4 py-2.5 font-bold text-gray-700 whitespace-nowrap"><span className="inline-block w-2 h-2 rounded-full mr-2 align-middle" style={{ backgroundColor: d.color }}></span>{d.label}</td>
+                                                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{d.budget > 0 ? fmtM(d.budget) : '—'}</td>
+                                                        <td className="px-3 py-2.5 text-right tabular-nums text-blue-700 font-semibold">{fmtM(d.act)}</td>
+                                                        <td className="px-3 py-2.5 text-right tabular-nums text-amber-600 font-semibold">{fmtM(d.fc)}</td>
+                                                        <td className="px-3 py-2.5 text-right tabular-nums font-bold text-gray-900">{fmtM(d.land)}</td>
+                                                        <td className={`px-3 py-2.5 text-right tabular-nums font-bold ${d.budget <= 0 ? 'text-gray-300' : g >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{d.budget > 0 ? (g >= 0 ? '+' : '−') + fmtM(Math.abs(g)) : '—'}</td>
+                                                        <td className="px-4 py-2.5">
+                                                            {d.budget > 0 ? (
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden relative">
+                                                                        <div className="absolute inset-y-0 left-0 bg-blue-500" style={{ width: `${actRate}%` }}></div>
+                                                                        <div className="absolute inset-y-0 bg-amber-400" style={{ left: `${actRate}%`, width: `${fcRate}%` }}></div>
+                                                                        {over > 0 && <div className="absolute inset-y-0 right-0 bg-emerald-400" style={{ width: `${Math.min(20, over)}%` }}></div>}
+                                                                    </div>
+                                                                    <span className={`text-[11px] font-bold tabular-nums w-12 text-right ${rate >= 100 ? 'text-emerald-600' : rate >= 90 ? 'text-amber-600' : 'text-red-500'}`}>{rate.toFixed(0)}%</span>
+                                                                </div>
+                                                            ) : <span className="text-[10px] text-gray-300">予算未設定</span>}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                            <tr className="border-t-2 border-gray-300 bg-slate-50 font-bold">
+                                                <td className="px-4 py-2.5 text-gray-800">全社</td>
+                                                <td className="px-3 py-2.5 text-right tabular-nums text-gray-600">{hasBudget ? fmtM(divRows.total.budget) : '—'}</td>
+                                                <td className="px-3 py-2.5 text-right tabular-nums text-blue-700">{fmtM(divRows.total.act)}</td>
+                                                <td className="px-3 py-2.5 text-right tabular-nums text-amber-600">{fmtM(divRows.total.fc)}</td>
+                                                <td className="px-3 py-2.5 text-right tabular-nums text-gray-900">{fmtM(divRows.total.land)}</td>
+                                                <td className={`px-3 py-2.5 text-right tabular-nums ${!hasBudget ? 'text-gray-300' : gap >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{hasBudget ? (gap >= 0 ? '+' : '−') + fmtM(Math.abs(gap)) : '—'}</td>
+                                                <td className="px-4 py-2.5 text-[11px] tabular-nums">{hasBudget ? (divRows.total.land / divRows.total.budget * 100).toFixed(1) + '%' : '—'}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="px-5 py-2 text-[10px] text-gray-400 border-t border-gray-100">青＝実績、橙＝見込。作品の見込は実績の最も多い事業部に寄せています。実績がまだない作品は配給会社の過去実績から事業部を推定しています。</div>
+                            </div>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                <div className="bg-white rounded-xl card-shadow border border-gray-200">
+                                    <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+                                        <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500"></span>見込未入力（今後公開）</h3>
+                                        <button className="text-[10px] font-bold text-blue-600 hover:underline" onClick={() => { setSrcFilter('none'); setSub('matrix'); }}>一覧で見る →</button>
+                                    </div>
+                                    <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
+                                        {actionLists.none.map(r => (
+                                            <div key={r.id} className="px-5 py-2 flex items-center justify-between gap-3">
+                                                <div className="min-w-0"><div className="text-[12px] font-semibold text-gray-800 truncate">{r.name}</div><div className="text-[10px] text-gray-400 truncate">{r.distributor || '—'}</div></div>
+                                                <div className="text-[11px] text-gray-500 tabular-nums shrink-0">{r.releaseDate ? r.releaseDate.substring(2) : '—'}</div>
+                                            </div>
+                                        ))}
+                                        {actionLists.none.length === 0 && <div className="px-5 py-8 text-center text-xs text-gray-400">今後公開の作品はすべて見込が入力済みです</div>}
+                                    </div>
+                                    {noneCount > actionLists.none.length && <div className="px-5 py-2 text-[10px] text-gray-400 border-t border-gray-100">ほか {noneCount - actionLists.none.length} 本</div>}
+                                </div>
+
+                                <div className="bg-white rounded-xl card-shadow border border-gray-200">
+                                    <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+                                        <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-rose-500"></span>未計上（公開済み・請求残）</h3>
+                                        <button className="text-[10px] font-bold text-blue-600 hover:underline" onClick={() => { setSrcFilter('lag'); setSub('matrix'); }}>一覧で見る →</button>
+                                    </div>
+                                    <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
+                                        {actionLists.lag.map(r => (
+                                            <div key={r.id} className="px-5 py-2 flex items-center justify-between gap-3">
+                                                <div className="min-w-0"><div className="text-[12px] font-semibold text-gray-800 truncate">{r.name}</div><div className="text-[10px] text-gray-400 truncate">{r.releaseDate ? r.releaseDate.substring(2) + ' 公開' : ''}{r.distributor ? ' ／ ' + r.distributor : ''}</div></div>
+                                                <div className="text-[11px] font-bold text-rose-600 tabular-nums shrink-0">{fmtM(metric === 'sales' ? r.remS : r.remP)}</div>
+                                            </div>
+                                        ))}
+                                        {actionLists.lag.length === 0 && <div className="px-5 py-8 text-center text-xs text-gray-400">請求残のある公開済み作品はありません</div>}
+                                    </div>
+                                    {lagRows.length > actionLists.lag.length && <div className="px-5 py-2 text-[10px] text-gray-400 border-t border-gray-100">ほか {lagRows.length - actionLists.lag.length} 本</div>}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {sub === 'matrix' && (
+                        <React.Fragment>
+                            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+                                <FcStat label="期予算" value={hasBudget ? fmtM(totalsAll.budget) : '—'} tone="slate" sub={hasBudget ? '' : '予算データ未読込'} />
+                                <FcStat label={`実績累計（〜${MONTH_LABELS[Math.max(0, curIdx - 1)]}）`} value={fmtM(totalsAll.act)} tone="blue" />
+                                <FcStat label="今後の見込" value={fmtM(totalsAll.fcst)} tone="amber" />
+                                <FcStat label="着地見込" value={fmtM(totalsAll.land)} tone="gray" big />
+                                <FcStat label="予算差異" value={hasBudget ? (gap >= 0 ? '+' : '−') + fmtM(Math.abs(gap)) : '—'} tone={!hasBudget ? 'gray' : gap >= 0 ? 'green' : 'red'} sub={hasBudget ? `達成率 ${(totalsAll.land / totalsAll.budget * 100).toFixed(1)}%` : '予算データ未読込'} />
+                                <FcStat label="見込未入力の作品" value={noneCount + '本'} tone={noneCount > 0 ? 'red' : 'green'} sub="今後公開・見込額なし" />
+                                <FcStat label="未計上（要確認）" value={fmtM(lagAmt)} tone={lagAmt > 0 ? 'red' : 'green'} sub={`公開済み・請求残 ${lagRows.length}本`} />
+                            </div>
+
+                            <div className="bg-white rounded-xl card-shadow border border-gray-200">
+                                <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-gray-100">
+                                    <ToggleButton options={[{ value: 'sales', label: '売上' }, { value: 'profit', label: '粗利' }]} value={metric} onChange={setMetric} />
+                                    <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5" value={divFilter} onChange={e => setDivFilter(e.target.value)}>
+                                        <option value="all">全事業部</option>{divs.map(d => <option key={d} value={d}>{d}事業部</option>)}
+                                    </select>
+                                    <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5" value={eraFilter} onChange={e => setEraFilter(e.target.value)}>
+                                        <option value="all">公開時期すべて</option><option value="current">今期公開</option><option value="future">来期公開</option><option value="past">過年度公開（継続計上）</option>
+                                    </select>
+                                    <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5" value={srcFilter} onChange={e => setSrcFilter(e.target.value)}>
+                                        <option value="all">すべての区分</option><option value="hasfc">見込あり</option><option value="plan">DB見込</option><option value="curve">カーブ推計</option><option value="tail">継続ランレート</option><option value="lag">未計上（要確認）</option><option value="none">見込未入力</option><option value="actual">実績のみ</option>
+                                    </select>
+                                    <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5" value={sortKey} onChange={e => setSortKey(e.target.value)}>
+                                        <option value="release">公開日順</option><option value="landing">着地額順</option><option value="remain">見込額順</option>
+                                    </select>
+                                    <div className="relative"><input className="pl-7 pr-2 py-1.5 border border-gray-200 rounded-lg text-xs w-44" placeholder="作品・配給・顧客で検索" value={q} onChange={e => setQ(e.target.value)} /><span className="absolute left-2 top-2 text-gray-400"><Icon name="Search" size={12} /></span></div>
+                                    <AssumptionPanel AS={AS} compact />
+                                    <button onClick={exportCsv} className="flex items-center gap-1 text-[11px] font-bold text-gray-600 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 px-2.5 py-1.5 rounded-lg border border-gray-200"><Icon name="Download" size={12} />CSV</button>
+                                    <div className="flex-1"></div>
+                                    <div className="flex items-center gap-3 text-[10px] text-gray-500">
+                                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-600"></span>実績</span>
+                                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-500"></span>見込</span>
+                                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-rose-500"></span>未計上</span>
+                                        <span className="flex items-center gap-1"><span className="text-red-500">▼</span>公開月</span>
+                                        <span className="font-semibold">単位：千円</span>
+                                    </div>
+                                </div>
+
+                                {(tail.n > 0 || matrix.skipped.count > 0) && (
+                                    <div className="px-4 py-2 bg-slate-50 border-b border-gray-100 flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-gray-500">
+                                        {tail.n > 0 && <span>過年度公開で今期も計上が続く作品：<b className="text-gray-700">{tail.n}本／{fmtM(tail.act)}</b>（表の下部にまとめています）</span>}
+                                        {matrix.skipped.count > 0 && <span className="text-amber-600">請求日が{currentPeriod}期の範囲外だった明細 {matrix.skipped.count}件（{fmtM(matrix.skipped.sales)}）は集計から除外しました</span>}
+                                    </div>
+                                )}
+                                <div className="overflow-x-auto max-h-[640px] overflow-y-auto">
+                                    <table className="min-w-full border-collapse">
+                                        <thead className="sticky top-0 z-20">
+                                            <tr>
+                                                <Th className="sticky left-0 z-30 bg-gray-100 text-left border-r border-gray-200 w-[248px]">作品名 / 配給・顧客</Th>
+                                                <Th>公開日</Th><Th>事業部</Th><Th>区分</Th>
+                                                <Th className="text-right bg-gray-200">着地</Th><Th className="text-right">実績</Th><Th className="text-right border-r border-gray-200">見込</Th>
+                                                {MONTH_LABELS.map((m, i) => <Th key={m} className={`text-right ${i === curIdx ? 'bg-blue-100 text-blue-700' : ''}`}>{m}</Th>)}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {shown.map(r => <Row key={r.id} r={r} />)}
+                                            {showNw && <Row r={matrix.nwRow} />}
+                                            {shown.length === 0 && !showNw && <tr><td colSpan={19} className="py-10 text-center text-gray-400 text-sm">該当する作品がありません</td></tr>}
+                                        </tbody>
+                                        <tfoot className="sticky bottom-0 z-20">
+                                            {[
+                                                { l: '実績計', arr: totals.aM, cls: 'text-blue-800 bg-blue-50', t: totals.act, col: 1 },
+                                                { l: '見込計', arr: totals.fM, cls: 'text-amber-700 bg-amber-50', t: totals.fcst, col: 2 },
+                                                { l: '着地計', arr: totals.aM.map((v, i) => v + totals.fM[i]), cls: 'text-gray-900 font-bold bg-gray-100', t: totals.land, col: 0 },
+                                                { l: '予算', arr: totals.bud, cls: 'text-gray-500 bg-slate-50', t: totals.budget, col: 0 },
+                                                { l: '予実差', arr: totals.aM.map((v, i) => v + totals.fM[i] - totals.bud[i]), cls: 'bg-slate-50', t: totals.land - totals.budget, col: 0, diff: true }
+                                            ].map(row => (
+                                                <tr key={row.l} className={row.cls}>
+                                                    <td className={`sticky left-0 z-30 px-3 py-1.5 text-[11px] font-bold border-t border-r border-gray-200 ${row.cls}`}>{row.l}</td>
+                                                    <td colSpan={3} className={`border-t border-gray-200 ${row.cls}`}></td>
+                                                    {[0, 1, 2].map(ci => (
+                                                        <td key={ci} className={`px-2 py-1.5 text-right text-[11px] font-bold border-t border-gray-200 tabular-nums ${row.cls} ${ci === 2 ? 'border-r' : ''} ${row.diff && ci === 0 ? (row.t >= 0 ? 'text-emerald-600' : 'text-red-500') : ''}`}>{row.col === ci ? ((row.diff && row.t > 0 ? '+' : '') + fmtK(row.t)) : ''}</td>
+                                                    ))}
+                                                    {row.arr.map((v, i) => <td key={i} className={`px-1.5 py-1.5 text-right text-[11px] border-t border-gray-200 tabular-nums ${row.cls} ${row.diff ? (v >= 0 ? 'text-emerald-600' : 'text-red-500') : ''}`}>{row.diff && v > 0 ? '+' + fmtK(v) : fmtK(v)}</td>)}
+                                                </tr>
+                                            ))}
+                                        </tfoot>
+                                    </table>
+                                </div>
+                                <div className="px-4 py-2 text-[10px] text-gray-400 border-t border-gray-100">行をクリックすると職種別の内訳と適用カーブを表示します。「見込」は案件管理DBの見込額から実績を差し引いた残額を、職種別の計上カーブで将来月に配分した値です。</div>
+                            </div>
+                        </React.Fragment>
+                    )}
+
+                    {sub === 'curve' && (
+                        <div className="space-y-4">
+                            <div className="bg-white rounded-xl card-shadow border border-gray-200 p-5">
+                                <h2 className="text-base font-bold text-gray-800 flex items-center gap-2 mb-2"><Icon name="TrendingUp" size={18} className="text-blue-600" />計上カーブ（公開日基準の売上発生パターン）</h2>
+                                <p className="text-xs text-gray-500 leading-relaxed">過去の請求実績（board）と案件管理DBの公開日を管理番号で突き合わせ、<b>「公開の何ヶ月前・何ヶ月後に売上が計上されたか」</b>を職種別に集計したものです。作品ごとの見込額を月次に展開する際の配分比率として使います。手入力は不要で、実績が増えるほど自動で精度が上がります。</p>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+                                    <FcStat label="学習に使った請求明細" value={fc.matched.toLocaleString() + '件'} tone="blue" />
+                                    <FcStat label="学習対象の売上総額" value={fmtM(fc.amount)} tone="slate" />
+                                    <FcStat label="公開日と紐付かず除外" value={fc.unmatched.toLocaleString() + '件'} tone="gray" sub="管理番号なし・期間外" />
+                                    <FcStat label="全体の標準粗利率" value={(fc.overallMargin * 100).toFixed(1) + '%'} tone="green" />
+                                </div>
+                            </div>
+
+                            <div className="bg-white rounded-xl card-shadow border border-gray-200 p-5">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-sm font-bold text-gray-700">職種別カーブ</h3>
+                                    <div className="flex items-center gap-3 text-[10px] text-gray-500"><span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-400"></span>公開前</span><span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-400"></span>公開月</span><span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-emerald-400"></span>公開後</span></div>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full text-xs">
+                                        <thead><tr className="bg-gray-50">
+                                            <th className="px-3 py-2 text-left font-semibold text-gray-500 w-36">職種</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">件数</th>
+                                            <th className="px-3 py-2 text-right font-semibold text-gray-500">標準粗利率</th>
+                                            <th className="px-3 py-2 text-center font-semibold text-gray-500 w-48">カーブ</th>
+                                            {FC.OFFSETS.map(o => <th key={o} className={`px-2 py-2 text-right font-semibold ${o === 0 ? 'text-red-500 bg-red-50' : 'text-gray-500'}`}>{o > 0 ? '+' + o : o}</th>)}
+                                        </tr></thead>
+                                        <tbody>
+                                            {C.CATS.map(c => {
+                                                const cv = fc.curves[c]; if (!cv) return null;
+                                                return (
+                                                    <tr key={c} className="border-t border-gray-100 hover:bg-gray-50">
+                                                        <td className="px-3 py-2 font-bold text-gray-700">{c}{cv.source !== 'own' && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-500 font-normal">全体カーブ流用</span>}</td>
+                                                        <td className="px-3 py-2 text-right tabular-nums text-gray-500">{cv.n.toLocaleString()}</td>
+                                                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-emerald-600">{(cv.margin * 100).toFixed(1)}%</td>
+                                                        <td className="px-3 py-2"><CurveBar shares={cv.shares} height={32} /></td>
+                                                        {FC.OFFSETS.map(o => { const v = cv.shares[o] || 0; return <td key={o} className={`px-2 py-2 text-right tabular-nums ${o === 0 ? 'bg-red-50' : ''}`} style={{ backgroundColor: o === 0 ? undefined : `rgba(59,130,246,${Math.min(0.35, v * 1.6)})` }}>{v > 0.004 ? (v * 100).toFixed(1) : '·'}</td>; })}
+                                                    </tr>
+                                                );
+                                            })}
+                                            <tr className="border-t-2 border-gray-300 bg-slate-50">
+                                                <td className="px-3 py-2 font-bold text-gray-800">全体（既定）</td>
+                                                <td className="px-3 py-2 text-right tabular-nums text-gray-500">{fc.matched.toLocaleString()}</td>
+                                                <td className="px-3 py-2 text-right tabular-nums font-semibold text-emerald-600">{(fc.overallMargin * 100).toFixed(1)}%</td>
+                                                <td className="px-3 py-2"><CurveBar shares={fc.overall} height={32} /></td>
+                                                {FC.OFFSETS.map(o => { const v = fc.overall[o] || 0; return <td key={o} className={`px-2 py-2 text-right tabular-nums font-semibold ${o === 0 ? 'bg-red-50' : ''}`}>{v > 0.004 ? (v * 100).toFixed(1) : '·'}</td>; })}
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="text-[10px] text-gray-400 mt-3">数値は各職種の売上金額シェア（%）。横軸は公開月からの月数（0＝公開月、−3＝公開3ヶ月前）。サンプルが{FC.MIN_SAMPLE}件未満の職種は全体カーブを流用します。</div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // --- 5.4 予実テーブル（月次 + 四半期 + 上期/下期の小計行つき） ---
+        // 期は3月始まり。小計は月次の素データから計算するため、累計表示に切り替えても各期間の合計を示す。
+        const SUBTOTAL_ROWS = [
+            { key: 'q1',   after: 2,  label: '第1四半期 (3-5月)',  from: 0, to: 2,  tone: 'q' },
+            { key: 'q2',   after: 5,  label: '第2四半期 (6-8月)',  from: 3, to: 5,  tone: 'q' },
+            { key: 'h1',   after: 5,  label: '上期 (3-8月)',       from: 0, to: 5,  tone: 'half' },
+            { key: 'q3',   after: 8,  label: '第3四半期 (9-11月)', from: 6, to: 8,  tone: 'q' },
+            { key: 'q4',   after: 11, label: '第4四半期 (12-2月)', from: 9, to: 11, tone: 'q' },
+            { key: 'h2',   after: 11, label: '下期 (9-2月)',       from: 6, to: 11, tone: 'half' },
+            { key: 'year', after: 11, label: '通期',               from: 0, to: 11, tone: 'year' }
+        ];
+        const SUBTOTAL_TONE = {
+            q:    { row: 'bg-blue-50 border-b-2 border-blue-200',        label: 'text-blue-800', value: 'text-blue-900', colorGap: true },
+            half: { row: 'bg-[#f5f0e6] border-b-2 border-[#e5dccb]',     label: 'text-blue-800', value: 'text-blue-800', colorGap: false },
+            year: { row: 'bg-[#e8dcc8] border-b-2 border-[#cdbb9f]',     label: 'text-blue-800', value: 'text-blue-800', colorGap: false }
+        };
+        function BudgetActualTable({ labels, budgetRow, actualRow, rawBudget, rawActual, lowerIsBetter }) {
+            const yen = (v) => Utils.formatYen((Number(v) || 0) * 1000);
+            const pick = (arr, i) => Number((arr || [])[i] || 0);
+            const sum = (arr, from, to) => { let t = 0; for (let i = from; i <= to; i++) t += pick(arr, i); return t; };
+            const gapCls = (gap, strong) => ((lowerIsBetter ? gap <= 0 : gap >= 0) ? (strong ? 'text-green-700' : 'text-green-600') : (strong ? 'text-red-700' : 'text-red-600'));
+            const rows = [];
+            (labels || []).forEach((label, i) => {
+                const b = pick(budgetRow, i), a = pick(actualRow, i), g = a - b;
+                rows.push(
+                    <tr key={'m' + i} className="hover:bg-gray-50">
+                        <td className="px-3 py-3 border-b text-gray-700 font-medium whitespace-nowrap">{label}</td>
+                        <td className="px-3 py-3 border-b text-right text-gray-700 whitespace-nowrap">{yen(b)}</td>
+                        <td className="px-3 py-3 border-b text-right text-gray-800 font-semibold whitespace-nowrap">{yen(a)}</td>
+                        <td className={`px-3 py-3 border-b text-right font-semibold whitespace-nowrap ${gapCls(g)}`}>{yen(g)}</td>
+                    </tr>
+                );
+                SUBTOTAL_ROWS.forEach(st => {
+                    if (st.after !== i) return;
+                    const b2 = sum(rawBudget, st.from, st.to), a2 = sum(rawActual, st.from, st.to), g2 = a2 - b2;
+                    const t = SUBTOTAL_TONE[st.tone];
+                    return rows.push(
+                        <tr key={st.key} className={t.row}>
+                            <td className={`px-3 py-3 font-bold whitespace-nowrap ${t.label}`}>{st.label}</td>
+                            <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${t.value}`}>{yen(b2)}</td>
+                            <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${t.value}`}>{yen(a2)}</td>
+                            <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${t.colorGap ? gapCls(g2, true) : t.value}`}>{yen(g2)}</td>
+                        </tr>
+                    );
+                });
+            });
+            return (
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead><tr className="bg-gray-50">
+                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase border-b whitespace-nowrap">月</th>
+                            <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b whitespace-nowrap">予算</th>
+                            <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b whitespace-nowrap">実績</th>
+                            <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600 uppercase border-b whitespace-nowrap">予実GAP</th>
+                        </tr></thead>
+                        <tbody>{rows}</tbody>
+                    </table>
+                </div>
+            );
+        }
+
+        // --- 5.5 スプレッドシート同期レイヤー（リトライ / タイムアウト / 同時実行制御） ---
+        const SYNC = {
+            CORE_TYPES: ['actual', 'budget', 'expenses', 'expense_details', 'last_year', 'works', 'release_schedule'],
+            TIMEOUT_MS: 90000,
+            MAX_ATTEMPTS: 3,
+            CONCURRENCY: 4,
+            LABELS: { config: '期の設定', actual: '今期 売上実績', budget: '今期 予算', expenses: '販管費 実績', expense_details: '販管費 内訳', last_year: '昨期 売上実績', works: '作品コード表', release_schedule: '案件管理DB（公開作品）' },
+            label: (type) => String(type).startsWith('history_') ? String(type).split('_')[1] + '期 売上実績' : (SYNC.LABELS[type] || type),
+            // 無くてもダッシュボードの主要画面は成立する種別（過去実績タブ・販管費内訳のみ影響）
+            optional: (type) => type === 'expense_details' || String(type).startsWith('history_'),
+            expectedSheets: (p) => {
+                const list = [
+                    { type: 'budget', sheet: '予算（読込用）' },
+                    { type: 'actual', sheet: p + '期売上（boardから抜粋）' },
+                    { type: 'last_year', sheet: (p - 1) + '期売上（昨期実績）' },
+                    { type: 'expenses', sheet: '予算実績リスト' },
+                    { type: 'expense_details', sheet: '販管費内訳' },
+                    { type: 'works', sheet: '作品コード表' },
+                    { type: 'release_schedule', sheet: '案件管理DB' }
+                ];
+                for (let i = 23; i <= p - 2; i++) list.push({ type: 'history_' + i, sheet: i + '期売上（boardから抜粋）' });
+                return list;
+            },
+            url: (base, type) => base + (base.indexOf('?') >= 0 ? '&' : '?') + 'type=' + encodeURIComponent(type) + '&_=' + Date.now(),
+            wait: (ms) => new Promise(r => setTimeout(r, ms)),
+            err: (message, retryable) => { const e = new Error(message); e.retryable = retryable; return e; },
+
+            // 1回だけ取得する。HTTPステータス・HTML応答・JSON破損をすべて例外として扱う
+            fetchOnce: async (url) => {
+                const ctrl = new AbortController();
+                const timer = setTimeout(() => ctrl.abort(), SYNC.TIMEOUT_MS);
+                try {
+                    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store', redirect: 'follow' });
+                    const text = await res.text();
+                    if (!res.ok) {
+                        // Apps Script は exec URL から script.googleusercontent.com へ転送される。
+                        // この転送が一時的に失敗すると 404 / 403 が返るため、これらも再試行の対象にする。
+                        const transient = (res.status === 403 || res.status === 404 || res.status === 408 || res.status === 429 || res.status >= 500);
+                        const hint = (res.status === 404 || res.status === 403) ? '（何度も出る場合は、連携URLが最新のデプロイのものかご確認ください）' : '';
+                        throw SYNC.err('スプレッドシート側がエラーを返しました (HTTP ' + res.status + ')' + hint, transient);
+                    }
+                    const head = text.slice(0, 600).trim().toLowerCase();
+                    if (head.charAt(0) === '<') {
+                        if (head.indexOf('accounts.google') >= 0 || head.indexOf('servicelogin') >= 0 || head.indexOf('signin') >= 0) {
+                            throw SYNC.err('Googleのログイン画面が返りました。Apps Scriptの「アクセスできるユーザー」の設定をご確認ください', false);
+                        }
+                        throw SYNC.err('スプレッドシート側がエラーページを返しました（Apps Scriptの実行エラーの可能性）', true);
+                    }
+                    try { return JSON.parse(text); }
+                    catch (pe) { throw SYNC.err('応答が途中で切れています（データ量が多すぎる可能性）', true); }
+                } catch (e) {
+                    if (ctrl.signal.aborted) throw SYNC.err('応答がありません（タイムアウト）', true);
+                    if (e instanceof TypeError) throw SYNC.err('通信できませんでした（ネットワークかURLをご確認ください）', true);
+                    throw e;
+                } finally { clearTimeout(timer); }
+            },
+
+            // 失敗したら待ち時間を延ばしながら最大 MAX_ATTEMPTS 回まで取り直す
+            fetchJson: async (base, type, onRetry) => {
+                let last = null;
+                for (let attempt = 1; attempt <= SYNC.MAX_ATTEMPTS; attempt++) {
+                    try {
+                        const json = await SYNC.fetchOnce(SYNC.url(base, type));
+                        if (json && json.error) throw SYNC.err(String(json.error), false);
+                        return json;
+                    } catch (e) {
+                        last = e;
+                        if (e.retryable === false || attempt === SYNC.MAX_ATTEMPTS) break;
+                        const ms = Math.round(1000 * Math.pow(2, attempt - 1) * (0.7 + Math.random() * 0.6));
+                        if (onRetry) onRetry(attempt, e, ms);
+                        console.warn('[sync] ' + type + ' 失敗(' + attempt + '回目): ' + e.message + ' → ' + ms + 'ms後に再取得');
+                        await SYNC.wait(ms);
+                    }
+                }
+                throw last;
+            },
+
+            // 同時に走らせる本数を絞る（Apps Script は同時アクセスに弱いため）
+            pool: async (items, limit, worker) => {
+                let cursor = 0;
+                const run = async () => { while (true) { const i = cursor++; if (i >= items.length) return; await worker(items[i], i); } };
+                await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, run));
+            }
+        };
 
         function App() {
             const [activeTab, setActiveTab] = useState('dashboard');
@@ -2246,6 +3409,7 @@
             const [worksMaster, setWorksMaster] = useState({});
             const [expenseDetails, setExpenseDetails] = useState({ categories: [], monthlyData: [], classMonthlyAgg: {} });
             const [releaseSchedule, setReleaseSchedule] = useState([]);
+            const [allWorks, setAllWorks] = useState([]);
             const [divisionMonthlyData, setDivisionMonthlyData] = useState({ div1: {}, div2: {}, div3: {} });
             const [divisionOpMode, setDivisionOpMode] = useState({ div1: 'monthly', div2: 'monthly', div3: 'monthly' });
             const [divisionMonthlyViewMode, setDivisionMonthlyViewMode] = useState({ div1: 'chart', div2: 'chart', div3: 'chart' });
@@ -2263,10 +3427,47 @@
             const [lastYearClientStats, setLastYearClientStats] = useState({});
             const [currentPeriod, setCurrentPeriod] = useState(31);
             const currentPeriodRef = useRef(31);
+            const [loadErrors, setLoadErrors] = useState([]);
+            const [lastSyncAt, setLastSyncAt] = useState(null);
+            const [historySyncing, setHistorySyncing] = useState(false);
+            const isFetchingRef = useRef(false);
+            const [diagBusy, setDiagBusy] = useState(false);
+            const [diagResult, setDiagResult] = useState(null);
 
-            const saveSettings = () => { localStorage.setItem('gaie_dashboard_api_url', apiUrl); fetchFromSpreadsheet(apiUrl); setShowSettings(false); };
+            const saveSettings = () => {
+                const u = String(apiUrl || '').trim();
+                if (!/^https?:\/\//.test(u)) { setLoadErrors([{ type: 'url', label: '連携URL', message: 'URLは https:// から始まるApps ScriptのウェブアプリURLを入力してください' }]); return; }
+                setApiUrl(u);
+                localStorage.setItem('gaie_dashboard_api_url', u);
+                setShowSettings(false);
+                fetchFromSpreadsheet(u);
+            };
+            const runDiagnostics = async () => {
+                const u = String(apiUrl || '').trim();
+                if (!/^https?:\/\//.test(u)) { setDiagResult({ error: '先に連携URLを入力してください' }); return; }
+                setDiagBusy(true); setDiagResult(null);
+                try {
+                    const json = await SYNC.fetchJson(u, 'sheets');
+                    const list = (json && json.data) || [];
+                    if (!Array.isArray(list)) throw new Error('診断に対応していない応答が返りました');
+                    const p = currentPeriodRef.current || 31;
+                    const names = list.map(x => String(x.name));
+                    const expected = SYNC.expectedSheets(p);
+                    setDiagResult({ list: list, expected: expected, missing: expected.filter(e => names.indexOf(e.sheet) < 0) });
+                } catch (e) {
+                    setDiagResult({ error: e.message + ' / Apps Script を最新の 過去分析.gs に更新して再デプロイすると診断できます' });
+                } finally { setDiagBusy(false); }
+            };
             const requestExpenseSort = (key) => setExpenseSortConfig({ key, direction: expenseSortConfig.key === key && expenseSortConfig.direction === 'ascending' ? 'descending' : 'ascending' });
-            const handleDrop = useCallback((e) => { e.preventDefault(); setIsDragging(false); Array.from(e.dataTransfer.files).forEach(file => { Papa.parse(file, { complete: (res) => identifyAndProcess(res.data, 'detect'), header: false, skipEmptyLines: true }); }); }, []);
+            const identifyAndProcessSafe = (rows, type) => {
+                try { identifyAndProcess(rows, type); return true; }
+                catch (err) {
+                    const key = 'csv:' + type;
+                    setLoadErrors(prev => prev.filter(x => x.type !== key).concat([{ type: key, label: 'CSV取込（' + SYNC.label(type) + '）', message: err.message }]));
+                    return false;
+                }
+            };
+            const handleDrop = useCallback((e) => { e.preventDefault(); setIsDragging(false); Array.from(e.dataTransfer.files).forEach(file => { Papa.parse(file, { complete: (res) => identifyAndProcessSafe(res.data, 'detect'), header: false, skipEmptyLines: true }); }); }, []);
 
             const identifyAndProcess = (rows, type) => {
                 if (!rows || rows.length === 0) return;
@@ -2281,7 +3482,7 @@
                         if (flat.includes('管理番号') && flat.includes('作品名')) { identifyAndProcess(rows, 'works'); return; }
                         return;
                     }
-                    let d;
+                    let d, ok = null;
                     switch (type) {
                         case 'budget':
                             console.log('[identifyAndProcess] Processing budget, rows count:', rows?.length);
@@ -2294,8 +3495,6 @@
                                     return newData;
                                 });
                                 setDivisionMonthlyData(prev => ({ div1: {...prev.div1, ...d.div1}, div2: {...prev.div2, ...d.div2}, div3: {...prev.div3, ...d.div3} }));
-                            } else {
-                                console.log('[identifyAndProcess] Budget processing returned null');
                             }
                             break;
                         case 'actual':
@@ -2319,7 +3518,7 @@
                             break;
                         case 'works':
                             const header = rows[0].map(String), iId = header.findIndex(h => h.includes("管理番号")), iName = header.findIndex(h => h.includes("作品名"));
-                            if (iId !== -1 && iName !== -1) { const m = {}; rows.slice(1).forEach(r => { const id = String(r[iId] || "").trim(), name = String(r[iName] || "").trim(); if (id) m[id] = name; }); setWorksMaster(m); }
+                            if (iId !== -1 && iName !== -1) { const m = {}; rows.slice(1).forEach(r => { const id = String(r[iId] || "").trim(), name = String(r[iName] || "").trim(); if (id) m[id] = name; }); setWorksMaster(m); ok = true; } else { ok = false; }
                             break;
                         case 'release_schedule': {
                             let hIdx = -1;
@@ -2328,13 +3527,14 @@
                                 const rowStr = rows[ri].map(String).join(' ');
                                 if (rowStr.includes('作品名') && rowStr.includes('公開日')) { hIdx = ri; break; }
                             }
-                            if (hIdx === -1) { console.warn('[release_schedule] Header row not found'); break; }
+                            if (hIdx === -1) { console.warn('[release_schedule] Header row not found'); ok = false; break; }
                             const h = rows[hIdx].map(c => String(c || '').replace(/\n/g, ''));
                             console.log('[release_schedule] Header found at row', hIdx, ':', h.slice(0, 8));
                             const findCol = (keyword) => h.findIndex(c => c.includes(keyword));
                             const idx = { id: findCol('管理番号'), name: findCol('作品名'), date: findCol('公開日'), dist: findCol('配給'), country: findCol('製作国'), anime: findCol('アニメ'), director: findCol('スタッフ'), cast: findCol('キャスト'), sales: findCol('全体売上'), profit: findCol('全体粗利'), boxOffice: findCol('初週興行収入'), screens: findCol('初週館数') };
+                            const jobCols = FC.JOBS.map(j => ({ cat: j.cat, s: findCol(j.db + '売上'), p: findCol(j.db + '粗利') }));
                             console.log('[release_schedule] Column indices:', idx);
-                            if (idx.date === -1 || idx.name === -1) { console.warn('[release_schedule] Required columns not found'); break; }
+                            if (idx.date === -1 || idx.name === -1) { console.warn('[release_schedule] Required columns not found'); ok = false; break; }
                             const JP_MAJOR = ['東宝','松竹','東映','ワーナー'];
                             const FO_MAJOR = ['東宝東和','東和ピクチャーズ','ワーナー','ディズニー','ソニー'];
                             const matchDist = (dist, list) => { const d = (dist||''); return list.some(m => d.includes(m)); };
@@ -2346,6 +3546,7 @@
                                 return '洋画独立系';
                             };
                             const items = [];
+                            const allItems = [];
                             const toDateStr = (val) => {
                                 if (!val) return '';
                                 if (val instanceof Date) {
@@ -2365,12 +3566,13 @@
                                 const y = parseInt(dm[1]), m = parseInt(dm[2]);
                                 const startYear = 1995 + currentPeriodRef.current;
                                 const inPeriod = (y === startYear && m >= 3) || (y === startYear + 1 && m <= 5);
-                                if (!inPeriod) return;
                                 const name = String(r[idx.name] || '').trim();
                                 if (!name) return;
                                 const dist = idx.dist >= 0 ? String(r[idx.dist] || '').trim() : '';
                                 const country = idx.country >= 0 ? String(r[idx.country] || '').trim() : '';
-                                items.push({
+                                const planJobs = {}, planJobsP = {};
+                                jobCols.forEach(jc => { if (jc.s >= 0) planJobs[jc.cat] = Utils.parseCurrency(r[jc.s]); if (jc.p >= 0) planJobsP[jc.cat] = Utils.parseCurrency(r[jc.p]); });
+                                const item = ({
                                     id: String(r[idx.id] || '').trim(),
                                     name: name,
                                     releaseDate: dateStr,
@@ -2384,16 +3586,26 @@
                                     profit: idx.profit >= 0 ? Utils.parseCurrency(r[idx.profit]) : 0,
                                     boxOffice: idx.boxOffice >= 0 ? Utils.parseCurrency(r[idx.boxOffice]) : 0,
                                     screens: idx.screens >= 0 ? parseInt(String(r[idx.screens] || '0').replace(/,/g, '')) || 0 : 0,
-                                    fiscalMonth: ((m - 3 + 12) % 12)
+                                    fiscalMonth: ((m - 3 + 12) % 12),
+                                    relKey: y * 12 + (m - 1),
+                                    planSales: idx.sales >= 0 ? Utils.parseCurrency(r[idx.sales]) : 0,
+                                    planProfit: idx.profit >= 0 ? Utils.parseCurrency(r[idx.profit]) : 0,
+                                    planJobs: planJobs,
+                                    planJobsP: planJobsP
                                 });
+                                if (item.id) allItems.push(item);
+                                if (inPeriod) items.push(item);
                             });
                             items.sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
-                            console.log(`[release_schedule] Loaded ${items.length} works for period`);
+                            allItems.sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+                            console.log(`[release_schedule] Loaded ${items.length} works for period / ${allItems.length} works total`);
                             setReleaseSchedule(items);
+                            setAllWorks(allItems);
+                            ok = true;
                             break;
                         }
                         case 'expense_details':
-                            d = DataProcessor.processExpenseDetails(rows, monthlyData.labels);
+                            d = DataProcessor.processExpenseDetails(rows, MONTH_LABELS);
                             if(d) setExpenseDetails(d);
                             break;
                         default:
@@ -2404,121 +3616,187 @@
                             }
                             break;
                     }
+                    if (ok === false || (ok === null && !d)) throw new Error('シートの中身を認識できませんでした（見出し行や列名が変わっていないかご確認ください）');
                 } catch(e) {
-                    console.error("Data processing error:", e);
+                    console.error('[取込エラー] ' + type + ':', e);
+                    throw e;
+                }
+            };
+
+            // 1系統ぶんの取得＋取込。成功なら null、失敗なら理由を返す
+            const syncOne = async (base, type, onRetry) => {
+                try {
+                    const json = await SYNC.fetchJson(base, type, onRetry);
+                    const rows = json && json.data;
+                    if (!Array.isArray(rows)) throw new Error('データが返ってきませんでした（シート名をご確認ください）');
+                    if (rows.length === 0) throw new Error('シートが空です');
+                    const headText = rows.slice(0, 3).map(r => Array.isArray(r) ? r.join('') : String(r)).join('');
+                    if (headText.indexOf('#REF!') >= 0) throw new Error('シートが #REF! エラーになっています（他ファイルを参照する数式が切れている可能性）');
+                    identifyAndProcess(rows, type);
+                    console.log('[sync] ' + type + ' 取込完了 (' + rows.length + '行)');
+                    return null;
+                } catch (e) {
+                    console.error('[sync] ' + type + ' 失敗:', e.message);
+                    return { type: type, label: SYNC.label(type), message: e.message, optional: SYNC.optional(type) };
                 }
             };
 
             const fetchFromSpreadsheet = async (url) => {
-                const targetUrl = url || apiUrl;
-                if (!targetUrl) return;
-                setIsLoading(true); setLoadingStatus('データ取得中...');
-                const fetchType = async (type) => {
-                    try {
-                        console.log(`[fetchType] Fetching type: ${type}`);
-                        const res = await fetch(`${targetUrl}${targetUrl.includes('?')?'&':'?'}type=${type}`);
-                        const text = await res.text();
-                        try {
-                            const json = JSON.parse(text);
-                            if (json.error) console.warn(`[fetchType] ${type} - server error:`, json.error);
-                            if(json.data) {
-                                console.log(`[fetchType] ${type} - received ${Array.isArray(json.data) ? json.data.length : 0} rows`);
-                                if (type === 'budget') console.log(`[fetchType] budget first 3 rows:`, Array.isArray(json.data) ? json.data.slice(0, 3) : json.data);
-                                if (Array.isArray(json.data) && json.data.length > 0) identifyAndProcess(json.data, type);
-                                else console.warn(`[fetchType] ${type} - empty data array`);
-                            } else {
-                                console.log(`[fetchType] ${type} - no data in response`, json);
-                            }
-                        } catch (parseErr) { console.error(`[fetchType] ${type} - parse error:`, parseErr); }
-                    } catch(e) { console.error(`[fetchType] ${type} - fetch error:`, e); }
-                };
-                let period = currentPeriod;
+                const targetUrl = String(url || apiUrl || '').trim();
+                if (!targetUrl) { setShowSettings(true); return; }
+                if (isFetchingRef.current) { console.warn('[sync] 取得中のため二重実行を見送りました'); return; }
+                isFetchingRef.current = true;
+                setIsLoading(true);
+                setLoadErrors([]);
+                setLoadingStatus('スプレッドシートに接続中...');
+
+                const errors = [];
+                let done = 0;
+                const total = SYNC.CORE_TYPES.length;
+                const onRetry = (label) => (attempt) => setLoadingStatus(label + ' を再取得中（' + (attempt + 1) + '回目）...');
+
+                // 期の設定（取れなくても既定値のまま続行する）
+                let period = currentPeriodRef.current || 31;
                 try {
-                    const cfgRes = await fetch(`${targetUrl}${targetUrl.includes('?')?'&':'?'}type=config`);
-                    const cfgJson = JSON.parse(await cfgRes.text());
-                    if (cfgJson.data && cfgJson.data.currentPeriod) {
-                        period = cfgJson.data.currentPeriod;
-                        currentPeriodRef.current = period;
-                        setCurrentPeriod(period);
-                    }
-                } catch(e) { console.warn('[config] Could not fetch config, using default'); }
-                await Promise.all(['actual', 'budget', 'expenses', 'expense_details', 'last_year', 'works', 'release_schedule'].map(fetchType));
-                const historyPeriods = [];
-                for (let i = 23; i <= period - 2; i++) historyPeriods.push(i);
-                await Promise.all(historyPeriods.map(p => fetchType(`history_${p}`)));
+                    const cfg = await SYNC.fetchJson(targetUrl, 'config', onRetry(SYNC.label('config')));
+                    const p = Number(cfg && cfg.data && cfg.data.currentPeriod);
+                    if (p > 0) { period = p; currentPeriodRef.current = p; setCurrentPeriod(p); }
+                } catch (e) {
+                    console.warn('[sync] config 失敗:', e.message);
+                    errors.push({ type: 'config', label: SYNC.label('config'), message: e.message + '（' + period + '期として表示します）' });
+                }
+
+                // 本体データ：同時実行を絞りつつ取得
+                await SYNC.pool(SYNC.CORE_TYPES, SYNC.CONCURRENCY, async (type) => {
+                    const label = SYNC.label(type);
+                    setLoadingStatus(label + ' を取得中...（' + (done + 1) + '/' + total + '）');
+                    const err = await syncOne(targetUrl, type, onRetry(label));
+                    if (err) errors.push(err);
+                    done++;
+                    setLoadingStatus(label + ' 完了（' + done + '/' + total + '）');
+                });
+
+                setLoadErrors(errors.slice());
+                setLastSyncAt(new Date());
                 setIsLoading(false);
+                isFetchingRef.current = false;
+
+                // 過去期は画面を止めずに裏で取得する
+                const historyTypes = [];
+                for (let i = 23; i <= period - 2; i++) historyTypes.push('history_' + i);
+                if (historyTypes.length === 0) return;
+                setHistorySyncing(true);
+                await SYNC.pool(historyTypes, 2, async (type) => {
+                    const err = await syncOne(targetUrl, type, onRetry(SYNC.label(type)));
+                    if (err) setLoadErrors(prev => prev.filter(x => x.type !== err.type).concat([err]));
+                });
+                setHistorySyncing(false);
             };
-            useEffect(() => { const u = localStorage.getItem('gaie_dashboard_api_url'); if(u) { setApiUrl(u); fetchFromSpreadsheet(u); } else setShowSettings(true); }, []);
+
+            useEffect(() => {
+                const u = (localStorage.getItem('gaie_dashboard_api_url') || '').trim();
+                if (u) { setApiUrl(u); fetchFromSpreadsheet(u); } else setShowSettings(true);
+            }, []);
 
             const calculateRankedProjects = useCallback((list, master, opts) => { const agg = {}; (list||[]).forEach(p => { const key = p.managerId || p.title; if(!agg[key]) agg[key] = { id: p.managerId, name: (master && p.managerId && master[p.managerId]) ? master[p.managerId] : p.title, client: p.client, sales: 0, profit: 0, count: 0, clients: {} }; agg[key].sales += p.sales; agg[key].profit += p.profit; agg[key].count++; const c = p.client||"不明"; agg[key].clients[c] = (agg[key].clients[c]||0)+p.profit; }); let result = Object.values(agg).map(p => ({ ...p, clientDisplay: Object.entries(p.clients).sort((a,b)=>b[1]-a[1])[0]?.[0] || p.client })).sort((a,b)=>b.profit-a.profit); if (opts && opts.minProfit != null) result = result.filter(p => p.profit >= opts.minProfit); if (opts && opts.limit != null) result = result.slice(0, opts.limit); else if (!opts || opts.minProfit == null) result = result.slice(0, 15); return result; }, []);
             const calculateRankedClients = useCallback((list) => { const agg = {}; (list||[]).forEach(p => { const k = p.client || '不明'; if(!agg[k]) agg[k] = { sales: 0, profit: 0 }; agg[k].sales += p.sales; agg[k].profit += p.profit; }); return Object.entries(agg).map(([name, d]) => ({ name, ...d, margin: d.sales > 0 ? (d.profit / d.sales * 100) : 0 })).sort((a,b) => b.profit - a.profit).slice(0, 10); }, []);
 
 
+            const hardErrors = loadErrors.filter(e => !e.optional);
+            const softErrors = loadErrors.filter(e => e.optional);
+
             return (
                 <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-gray-800" onDragOver={(e)=>{e.preventDefault();setIsDragging(true);}} onDragLeave={(e)=>{if(e.currentTarget===e.target)setIsDragging(false);}} onDrop={handleDrop}>
-                    <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm h-14"><div className="max-w-7xl mx-auto w-full h-full px-4 sm:px-8 flex items-center justify-between"><div className="flex items-center gap-3 flex-shrink-0 mr-4"><div className="bg-blue-600 text-white p-1.5 rounded-lg shadow-sm"><Icon name="Activity" size={18} /></div><h1 className="text-base font-bold text-gray-800 tracking-tight hidden sm:block">Gaie Sales Dashboard</h1></div><nav className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar h-full py-2">{navItems.map(item => (<button key={item.id} onClick={() => setActiveTab(item.id)} className={`${CLS.NAV_BTN} ${activeTab===item.id?CLS.NAV_BTN_ACTIVE:CLS.NAV_BTN_INACTIVE}`}><Icon name={item.icon} size={14} />{item.label}</button>))}</nav><div className="flex items-center gap-3 flex-shrink-0 ml-4 border-l border-gray-100 pl-4 h-8"><button onClick={()=>setShowSettings(true)} className="flex items-center gap-1.5 text-xs font-bold text-gray-600 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-gray-200"><Icon name="Settings" size={14} />連携</button></div></div></header>
+                    <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm h-14"><div className="max-w-7xl mx-auto w-full h-full px-4 sm:px-8 flex items-center justify-between"><div className="flex items-center gap-3 flex-shrink-0 mr-4"><div className="bg-blue-600 text-white p-1.5 rounded-lg shadow-sm"><Icon name="Activity" size={18} /></div><h1 className="text-base font-bold text-gray-800 tracking-tight hidden sm:block">Gaie Sales Dashboard</h1></div><nav className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar h-full py-2">{navItems.map(item => (<button key={item.id} onClick={() => setActiveTab(item.id)} className={`${CLS.NAV_BTN} ${activeTab===item.id?CLS.NAV_BTN_ACTIVE:CLS.NAV_BTN_INACTIVE}`}><Icon name={item.icon} size={14} />{item.label}</button>))}</nav><div className="flex items-center gap-2 flex-shrink-0 ml-4 border-l border-gray-100 pl-4 h-8"><span className="hidden lg:block text-[10px] leading-tight text-right whitespace-nowrap">{isLoading ? <span className="text-blue-600 font-bold">同期中...</span> : (hardErrors.length > 0 ? <span className="text-amber-600 font-bold">データ一部欠損</span> : (lastSyncAt ? <span className="text-gray-400">最終同期 {lastSyncAt.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}</span> : <span className="text-gray-400">未同期</span>))}{historySyncing && <><br/><span className="text-gray-400">過去期を取得中...</span></>}</span><button onClick={()=>fetchFromSpreadsheet()} disabled={isLoading} className="flex items-center gap-1.5 text-xs font-bold text-gray-600 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-gray-200 disabled:opacity-40"><Icon name="Cloud" size={14} />更新</button><button onClick={()=>setShowSettings(true)} className="relative flex items-center gap-1.5 text-xs font-bold text-gray-600 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-gray-200"><Icon name="Settings" size={14} />連携{hardErrors.length > 0 && <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-amber-500 border border-white"></span>}</button></div></div></header>
                     <main className="flex-1 overflow-y-auto p-4 max-w-7xl mx-auto w-full">
                          {isLoading && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-sm"><div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center max-w-sm w-full relative overflow-hidden"><div className="mb-6 relative flex items-center justify-center h-20 w-20"><div className="absolute inset-0 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div><div className="relative bg-white p-4 rounded-full shadow-sm text-blue-600"><Icon name="TrendingUp" size={32} /></div></div><h3 className="text-lg font-bold text-gray-800 mb-2">データを同期中</h3><p className="text-xs text-gray-500 mb-1">{loadingStatus}</p></div></div>}
+                         {!isLoading && hardErrors.length > 0 && (
+                             <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
+                                 <div className="flex items-start gap-3">
+                                     <span className="text-amber-600 mt-0.5 flex-shrink-0"><Icon name="Alert" size={18} /></span>
+                                     <div className="flex-1 min-w-0">
+                                         <h3 className="text-sm font-bold text-amber-900">一部のデータを読み込めませんでした。表示中の数字は不完全です。</h3>
+                                         <ul className="mt-2 space-y-1">
+                                             {hardErrors.map(e => (<li key={e.type} className="text-xs text-amber-800"><span className="font-bold">{e.label}</span>：{e.message}</li>))}
+                                         </ul>
+                                         <p className="mt-2 text-xs text-amber-700">シート名が変わっている場合は、右上の「連携」→「診断する」でスプレッドシート内のシート一覧を確認できます。</p>
+                                     </div>
+                                     <button onClick={()=>fetchFromSpreadsheet()} className="flex-shrink-0 px-3 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg">再取得</button>
+                                 </div>
+                             </div>
+                         )}
+                         {!isLoading && softErrors.length > 0 && (
+                             <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5">
+                                 <p className="text-xs text-gray-500"><span className="font-bold text-gray-600">未整備のため非表示：</span>{softErrors.map(e => e.label).join('、')}<span className="text-gray-400">（対象シートがありません。全社・事業部の数字には影響しません）</span></p>
+                             </div>
+                         )}
                          <ErrorBoundary>
                              {activeTab === 'dashboard' && <DashboardPage monthlyData={monthlyData} projectList={projectList} worksMaster={worksMaster} divisionMonthlyData={divisionMonthlyData} divisionData={divisionData} displayMode={displayMode} setDisplayMode={setDisplayMode} opMode={opMode} setOpMode={setOpMode} monthlyViewMode={monthlyViewMode} setMonthlyViewMode={setMonthlyViewMode} opViewMode={opViewMode} setOpViewMode={setOpViewMode} expenseViewMode={expenseViewMode} setExpenseViewMode={setExpenseViewMode} calculateRankedProjects={calculateRankedProjects} calculateRankedClients={calculateRankedClients} />}
                              {activeTab === 'weekly' && <WeeklySummaryPage projectList={projectList} worksMaster={worksMaster} releaseSchedule={releaseSchedule} currentPeriod={currentPeriod} />}
+                             {activeTab === 'forecast' && <ForecastPage allWorks={allWorks} releaseSchedule={releaseSchedule} projectList={projectList} lastYearProjectList={lastYearProjectList} historicalData={historicalData} monthlyData={monthlyData} divisionMonthlyData={divisionMonthlyData} worksMaster={worksMaster} currentPeriod={currentPeriod} />}
                              {activeTab === 'expenses' && <ExpensesPage expenseDetails={expenseDetails} monthlyData={monthlyData} requestExpenseSort={requestExpenseSort} expenseSortConfig={expenseSortConfig} />}
                              {activeTab === 'history' && <HistoricalPage monthlyData={monthlyData} historicalData={historicalData} projectList={projectList} lastYearProjectList={lastYearProjectList} currentPeriod={currentPeriod} />}
                              {activeTab === 'clients' && <ClientAnalysisPage projectList={projectList} monthlyData={monthlyData} lastYearClientStats={lastYearClientStats} lastYearProjectList={lastYearProjectList} />}
-                             {activeTab === 'works' && <WorkAnalysisPage projectList={projectList} monthlyData={monthlyData} worksMaster={worksMaster} releaseSchedule={releaseSchedule} onLoadCsv={identifyAndProcess} currentPeriod={currentPeriod} />}
+                             {activeTab === 'works' && <WorkAnalysisPage projectList={projectList} monthlyData={monthlyData} worksMaster={worksMaster} releaseSchedule={releaseSchedule} onLoadCsv={identifyAndProcessSafe} currentPeriod={currentPeriod} />}
                              {activeTab === 'jobs' && <JobAnalysisPage projectList={projectList} monthlyData={monthlyData} />}
                              {activeTab === 'division' && <UnifiedDivisionPage divisionMonthlyData={divisionMonthlyData} monthlyData={monthlyData} projectList={projectList} worksMaster={worksMaster} displayMode={displayMode} setDisplayMode={setDisplayMode} divisionOpMode={divisionOpMode} setDivisionOpMode={setDivisionOpMode} divisionMonthlyViewMode={divisionMonthlyViewMode} setDivisionMonthlyViewMode={setDivisionMonthlyViewMode} divisionOpViewMode={divisionOpViewMode} setDivisionOpViewMode={setDivisionOpViewMode} divisionExpenseViewMode={divisionExpenseViewMode} setDivisionExpenseViewMode={setDivisionExpenseViewMode} calculateRankedProjects={calculateRankedProjects} calculateRankedClients={calculateRankedClients} />}
                              {activeTab === 'projects' && <ProjectsPage projectList={projectList} monthlyData={monthlyData} worksMaster={worksMaster} />}
                              {activeTab === 'report' && <SummaryReportPage monthlyData={monthlyData} projectList={projectList} worksMaster={worksMaster} divisionMonthlyData={divisionMonthlyData} currentPeriod={currentPeriod} />}
                          </ErrorBoundary>
                     </main>
-                    {showSettings && <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay"><div className="bg-white p-8 rounded-xl shadow-xl w-full max-w-lg"><h3 className="text-xl font-bold mb-4 flex items-center gap-2"><Icon name="Settings"/> 設定</h3><input type="text" className="w-full border p-3 rounded mb-4" placeholder="API URL" value={apiUrl} onChange={(e)=>setApiUrl(e.target.value)} /><div className="flex justify-end gap-3"><button onClick={()=>setShowSettings(false)} className="px-4 py-2 text-gray-500">キャンセル</button><button onClick={saveSettings} className="px-4 py-2 bg-blue-600 text-white rounded">保存</button></div></div></div>}
+                    {showSettings && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4">
+                            <div className="bg-white p-8 rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+                                <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><Icon name="Settings"/> 設定</h3>
+                                <label className="block text-xs font-bold text-gray-500 mb-1">連携URL（Apps Script ウェブアプリの /exec URL）</label>
+                                <input type="text" className="w-full border p-3 rounded mb-4 text-sm" placeholder="https://script.google.com/macros/s/..../exec" value={apiUrl} onChange={(e)=>setApiUrl(e.target.value)} />
+                                <div className="border-t border-gray-100 pt-4 mb-4">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div>
+                                            <h4 className="text-sm font-bold text-gray-700">シート構成の診断</h4>
+                                            <p className="text-xs text-gray-500">スプレッドシートにどのシートがあるかを調べ、不足しているものを表示します。</p>
+                                        </div>
+                                        <button onClick={runDiagnostics} disabled={diagBusy} className="flex-shrink-0 px-3 py-1.5 text-xs font-bold text-white bg-gray-700 hover:bg-gray-800 rounded-lg disabled:opacity-40">{diagBusy ? '確認中...' : '診断する'}</button>
+                                    </div>
+                                    {diagResult && diagResult.error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3">{diagResult.error}</p>}
+                                    {diagResult && !diagResult.error && (
+                                        <div className="mt-2 space-y-3">
+                                            {diagResult.missing.length > 0 ? (
+                                                <div className="bg-amber-50 border border-amber-200 rounded p-3">
+                                                    <p className="text-xs font-bold text-amber-900 mb-1">見つからないシート（{diagResult.missing.length}件）</p>
+                                                    <ul className="text-xs text-amber-800 space-y-0.5">{diagResult.missing.map(m => <li key={m.type}>・{m.sheet}　<span className="text-amber-600">（{SYNC.label(m.type)}用{SYNC.optional(m.type) ? '／無くても主要画面は動きます' : ''}）</span></li>)}</ul>
+                                                </div>
+                                            ) : <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded p-3">必要なシートはすべて見つかりました。</p>}
+                                            <div>
+                                                <p className="text-xs font-bold text-gray-500 mb-1">スプレッドシート内のシート一覧（{diagResult.list.length}件）</p>
+                                                <div className="max-h-56 overflow-y-auto border border-gray-200 rounded">
+                                                    <table className="w-full text-xs">
+                                                        <thead><tr className="bg-gray-50"><th className="px-2 py-1.5 text-left font-semibold text-gray-600">シート名</th><th className="px-2 py-1.5 text-right font-semibold text-gray-600">行</th><th className="px-2 py-1.5 text-right font-semibold text-gray-600">列</th><th className="px-2 py-1.5 text-left font-semibold text-gray-600">1行目の先頭</th></tr></thead>
+                                                        <tbody>{diagResult.list.map((sh, i) => (<tr key={i} className="border-t border-gray-100"><td className="px-2 py-1.5 font-medium text-gray-800">{String(sh.name)}</td><td className="px-2 py-1.5 text-right text-gray-500">{sh.rows}</td><td className="px-2 py-1.5 text-right text-gray-500">{sh.cols}</td><td className="px-2 py-1.5 text-gray-500 truncate max-w-xs">{((sh.head && sh.head[0]) || []).slice(0, 5).map(c => String(c === null || c === undefined ? '' : c).replace(/\n/g, ' ')).join(' / ')}</td></tr>))}</tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex justify-end gap-3"><button onClick={()=>setShowSettings(false)} className="px-4 py-2 text-gray-500">キャンセル</button><button onClick={saveSettings} className="px-4 py-2 bg-blue-600 text-white rounded font-bold">保存して取得</button></div>
+                            </div>
+                        </div>
+                    )}
                     {isDragging && <div className="fixed inset-0 bg-blue-600/20 backdrop-blur-sm z-50 flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl"><div className="bg-white p-8 rounded-xl shadow-xl text-center"><Icon name="Upload" size={48} className="mx-auto text-blue-500 mb-2"/><h3 className="font-bold">Drop CSV</h3></div></div>}
                 </div>
             );
         }
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-    <script>
-        // 月次予実表の四半期行に半期・通期の集計行を追加する
-        (() => {
-            const yen = value => '¥' + Math.round(value).toLocaleString();
-            const valueOf = cell => Number(String(cell.textContent || '').replace(/[^0-9.-]/g, '')) || 0;
-            const addPeriodRows = () => {
-                document.querySelectorAll('table').forEach(table => {
-                    const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent.trim());
-                    if (headers.length !== 6 || !headers.includes('予実GAP') || !headers.includes('昨期GAP')) return;
-                    const body = table.querySelector('tbody');
-                    if (!body || body.dataset.halfYearRowsAdded) return;
-                    const rows = Array.from(body.querySelectorAll('tr'));
-                    const quarterRows = rows.filter(row => /第[1-4]四半期/.test(row.cells[0]?.textContent || ''));
-                    if (quarterRows.length < 4) return;
-                    const values = quarterRows.map(row => Array.from(row.cells).slice(1, 6).map(valueOf));
-                    const insertRow = (label, indexes, reference) => {
-                        // 列ごとに対象四半期を縦に合算する（予算/実績/予実GAP/昨期実績/昨期GAP）
-                        const totals = [0, 1, 2, 3, 4].map(col => indexes.reduce((sum, index) => sum + values[index][col], 0));
-                        const budget = totals[0], actual = totals[1], lastYear = totals[3];
-                        const cells = [label, yen(budget), yen(actual), yen(actual - budget), yen(lastYear), yen(actual - lastYear)];
-                        const row = document.createElement('tr');
-                        row.className = label === '通期' ? 'bg-[#e8dcc8] border-b-2 border-[#cdbb9f]' : 'bg-[#f5f0e6] border-b-2 border-[#e5dccb]';
-                        cells.forEach((cell, index) => {
-                            const td = document.createElement('td');
-                            td.className = `px-4 py-3 ${index === 0 ? 'text-blue-800 font-bold' : 'text-right text-blue-800 font-bold'}`;
-                            td.textContent = cell;
-                            row.appendChild(td);
-                        });
-                        reference.after(row);
-                    };
-                    insertRow('上期 (3-8月)', [0, 1], quarterRows[1]);
-                    insertRow('下期 (9-2月)', [2, 3], quarterRows[3]);
-                    insertRow('通期', [0, 1, 2, 3], quarterRows[3].nextElementSibling);
-                    body.dataset.halfYearRowsAdded = 'true';
-                });
-            };
-            new MutationObserver(addPeriodRows).observe(document.getElementById('root'), { childList: true, subtree: true });
-            addPeriodRows();
-        })();
+        const MISSING_LIBS = [['React', 'React'], ['ReactDOM', 'ReactDOM'], ['Chart', 'Chart.js'], ['Papa', 'PapaParse']].filter(([g]) => typeof window[g] === 'undefined').map(([, n]) => n);
+        if (MISSING_LIBS.length > 0) {
+            document.getElementById('root').innerHTML = '<div style="padding:40px;font-family:sans-serif;color:#b45309;background:#fffbeb;border:1px solid #fcd34d;border-radius:12px;margin:24px">'
+                + '<h2 style="margin:0 0 8px;font-size:16px">外部ライブラリを読み込めませんでした</h2>'
+                + '<p style="margin:0 0 8px;font-size:13px">読み込めなかったもの：' + MISSING_LIBS.join('、') + '</p>'
+                + '<p style="margin:0;font-size:13px">ネットワーク接続（社内プロキシやオフライン）をご確認のうえ、ページを再読み込みしてください。</p></div>';
+        } else {
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<App />);
+        }
     </script>
 </body>
 </html>
